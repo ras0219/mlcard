@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+  <Type Name="vec">
+    <DisplayString>{{ size={m_len} }}</DisplayString>
+    <Expand>
+      <Item Name="[size]" ExcludeView="simple">m_len</Item>
+      <ArrayItems>
+        <Size>m_len</Size>
+        <ValuePointer>m_data._Mypair._Myval2</ValuePointer>
+      </ArrayItems>
+    </Expand>
+  </Type>
+</AutoVisualizer>

@@ -1,0 +1,4 @@
+.vs/
+vcpkg_installed/
+out/
+CMakeSettings.json
