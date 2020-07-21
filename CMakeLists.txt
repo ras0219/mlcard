@@ -1,9 +1,8 @@
 cmake_minimum_required(VERSION 3.14)
 cmake_policy(SET CMP0091 NEW)
 set(VCPKG_TARGET_TRIPLET x64-windows-static CACHE STRING "" FORCE)
-project(mlcard CXX)
-
 set(CMAKE_CXX_STANDARD 17)
+project(mlcard CXX)
 
 if(MSVC)
     add_compile_options(/permissive- /FC)

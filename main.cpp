@@ -16,6 +16,7 @@
 #include <FL/Fl_Widget.H>
 #include <FL/fl_draw.H>
 #include <atomic>
+#include <fmt/core.h>
 #include <fmt/format.h>
 #include <memory>
 #include <mutex>
@@ -25,6 +26,50 @@
 #include <valarray>
 #include <vector>
 
+template<>
+struct fmt::formatter<vec_slice>
+{
+    constexpr auto parse(format_parse_context& ctx)
+    {
+        if (ctx.begin() != ctx.end() && *ctx.begin() != '}') throw format_error("invalid format");
+        return ctx.begin();
+    }
+    template<typename FormatContext>
+    auto format(vec_slice p, FormatContext& ctx) -> decltype(ctx.out())
+    {
+        if (p.size() == 0) return format_to(ctx.out(), "()");
+
+        auto out = format_to(ctx.out(), "({: 4.2f}", p[0]);
+
+        for (size_t i = 1; i < p.size(); ++i)
+            out = format_to(out, ", {: 4.2f}", p[i]);
+
+        return format_to(out, ")");
+    }
+};
+
+template<>
+struct fmt::formatter<std::vector<int>>
+{
+    constexpr auto parse(format_parse_context& ctx)
+    {
+        if (ctx.begin() != ctx.end() && *ctx.begin() != '}') throw format_error("invalid format");
+        return ctx.begin();
+    }
+    template<typename FormatContext>
+    auto format(std::vector<int> const& p, FormatContext& ctx) -> decltype(ctx.out())
+    {
+        if (p.size() == 0) return format_to(ctx.out(), "()");
+
+        auto out = format_to(ctx.out(), "({}", p[0]);
+
+        for (size_t i = 1; i < p.size(); ++i)
+            out = format_to(out, ", {}", p[i]);
+
+        return format_to(out, ")");
+    }
+};
+
 std::atomic<bool> s_worker_exit = false;
 
 std::atomic<double> s_err[200] = {0};
@@ -33,13 +78,50 @@ struct Card
 {
     enum class Type
     {
-        Attack,
-        Defend,
-        Sunder,
+        Creature,
         Direct,
+        Land,
     };
 
-    int value = 0;
+    Type type;
+
+    int value;
+
+    void randomize()
+    {
+        type = (Type)(rand() % 3);
+        if (type == Type::Land)
+            value = 10;
+        else
+            value = 1 + rand() % 7;
+    }
+    void encode(vec_slice x) const
+    {
+        x.assign(0.0);
+        x[(int)type] = value / 10.0;
+    }
+};
+
+template<>
+struct fmt::formatter<std::vector<Card>>
+{
+    constexpr auto parse(format_parse_context& ctx)
+    {
+        if (ctx.begin() != ctx.end() && *ctx.begin() != '}') throw format_error("invalid format");
+        return ctx.begin();
+    }
+    template<typename FormatContext>
+    auto format(std::vector<Card> const& p, FormatContext& ctx) -> decltype(ctx.out())
+    {
+        if (p.size() == 0) return format_to(ctx.out(), "()");
+
+        auto out = format_to(ctx.out(), "({}.{}", (int)p[0].type, p[0].value);
+
+        for (size_t i = 1; i < p.size(); ++i)
+            out = format_to(out, ", {}.{}", (int)p[i].type, p[i].value);
+
+        return format_to(out, ")");
+    }
 };
 
 struct Player
@@ -48,10 +130,10 @@ struct Player
     int mana = 0;
     int creature = 0;
     int def = 0;
-    std::vector<int> avail;
+    std::vector<Card> avail;
 
     static constexpr size_t encoded_size = 4;
-    static constexpr size_t encoded_card_size = 1;
+    static constexpr size_t encoded_card_size = 3;
 
     void encode(vec_slice x) const
     {
@@ -64,18 +146,17 @@ struct Player
     {
         for (size_t i = 0; i < avail.size(); ++i)
         {
-            x[i] = avail[i] / 10.0;
+            auto c = x.slice(i * encoded_card_size, encoded_card_size);
+            avail[i].encode(c);
         }
     }
     void init()
     {
         *this = Player();
         avail.clear();
-        avail.push_back(1 + rand() * 7 / RAND_MAX);
-        avail.push_back(1 + rand() * 7 / RAND_MAX);
-        avail.push_back(1 + rand() * 7 / RAND_MAX);
-        avail.push_back(1 + rand() * 7 / RAND_MAX);
-        avail.push_back(1 + rand() * 7 / RAND_MAX);
+        avail.resize(5);
+        for (auto&& c : avail)
+            c.randomize();
     }
 
     int cards() const { return (int)avail.size(); }
@@ -163,10 +244,23 @@ struct Game
 
         if (action > 0)
         {
-            if (me.mana >= me.avail[action - 1])
+            auto& card = me.avail[action - 1];
+            if (card.type == Card::Type::Land)
             {
-                // me.creature = std::max(me.creature, me.avail[action - 1]);
-                you.health -= me.avail[action - 1];
+                me.mana++;
+            }
+            else if (me.mana >= card.value)
+            {
+                if (card.type == Card::Type::Creature)
+                {
+                    me.creature = std::max(me.creature, card.value);
+                }
+                else if (card.type == Card::Type::Direct)
+                {
+                    you.health -= card.value;
+                }
+                else
+                    std::terminate();
             }
             else
             {
@@ -176,9 +270,10 @@ struct Game
             // Discard
             me.avail.erase(me.avail.begin() + action - 1);
         }
-        me.avail.push_back(1 + rand() * 7 / RAND_MAX);
+        me.avail.emplace_back();
+        me.avail.back().randomize();
 
-        // you.health -= std::max(0, me.creature - you.def);
+        you.health -= std::max(0, me.creature - you.def);
         player2_turn = !player2_turn;
         ++turn;
     }
@@ -208,10 +303,23 @@ struct Game
         auto& p = cur_player();
         for (int i = 0; i < p.cards(); ++i)
         {
-            if (p.avail[i] <= p.mana)
-                actions.push_back(fmt::format("Play {}", p.avail[i]));
+            if (p.avail[i].type == Card::Type::Land)
+                actions.push_back("Play Land");
             else
-                actions.push_back(fmt::format("Discard {}", p.avail[i]));
+            {
+                const char* prefix = p.avail[i].value > p.mana ? "Play" : "Play";
+                const char* suffix = p.avail[i].value > p.mana ? " as Land" : "";
+                if (p.avail[i].type == Card::Type::Creature)
+                {
+                    actions.push_back(fmt::format("{} Creature {}{}", prefix, p.avail[i].value, suffix));
+                }
+                else if (p.avail[i].type == Card::Type::Direct)
+                {
+                    actions.push_back(fmt::format("{} Damage {}{}", prefix, p.avail[i].value, suffix));
+                }
+                else
+                    std::terminate();
+            }
         }
         return actions;
     }
@@ -263,7 +371,7 @@ struct Nonlinear
     }
 };
 
-std::atomic<double> s_learn_rate = 0.001;
+std::atomic<double> s_learn_rate = 0.0005;
 
 struct Layer
 {
@@ -901,50 +1009,6 @@ struct Graph : Fl_Widget
     std::vector<std::vector<double>> valss;
 };
 
-template<>
-struct fmt::formatter<vec_slice>
-{
-    constexpr auto parse(format_parse_context& ctx)
-    {
-        if (ctx.begin() != ctx.end() && *ctx.begin() != '}') throw format_error("invalid format");
-        return ctx.begin();
-    }
-    template<typename FormatContext>
-    auto format(vec_slice p, FormatContext& ctx) -> decltype(ctx.out())
-    {
-        if (p.size() == 0) return format_to(ctx.out(), "()");
-
-        auto out = format_to(ctx.out(), "({: 4.2f}", p[0]);
-
-        for (size_t i = 1; i < p.size(); ++i)
-            out = format_to(out, ", {: 4.2f}", p[i]);
-
-        return format_to(out, ")");
-    }
-};
-
-template<>
-struct fmt::formatter<std::vector<int>>
-{
-    constexpr auto parse(format_parse_context& ctx)
-    {
-        if (ctx.begin() != ctx.end() && *ctx.begin() != '}') throw format_error("invalid format");
-        return ctx.begin();
-    }
-    template<typename FormatContext>
-    auto format(std::vector<int> const& p, FormatContext& ctx) -> decltype(ctx.out())
-    {
-        if (p.size() == 0) return format_to(ctx.out(), "()");
-
-        auto out = format_to(ctx.out(), "({}", p[0]);
-
-        for (size_t i = 1; i < p.size(); ++i)
-            out = format_to(out, ", {}", p[i]);
-
-        return format_to(out, ")");
-    }
-};
-
 struct MLStats_Group : Fl_Group
 {
     MLStats_Group(int x, int y, int w, int h, const char* label = 0)
@@ -1058,9 +1122,11 @@ struct Game_Group : Fl_Group
             m_turn_viewer.m_cur_turn.add(fmt::format("@.Turn {}: Player 1's turn", g.turn + 1).c_str());
         m_turn_viewer.m_cur_turn.add(fmt::format("@.P1 Health: {}", g.p1.health).c_str());
         m_turn_viewer.m_cur_turn.add(fmt::format("@.P1 Mana: {}", g.p1.mana).c_str());
+        m_turn_viewer.m_cur_turn.add(fmt::format("@.P1 Creature: {}", g.p1.creature).c_str());
         m_turn_viewer.m_cur_turn.add("");
         m_turn_viewer.m_cur_turn.add(fmt::format("@.P2 Health: {}", g.p2.health).c_str());
         m_turn_viewer.m_cur_turn.add(fmt::format("@.P2 Mana: {}", g.p2.mana).c_str());
+        m_turn_viewer.m_cur_turn.add(fmt::format("@.P2 Creature: {}", g.p2.creature).c_str());
     }
 
     void on_player_action()
