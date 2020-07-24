@@ -25,8 +25,8 @@ struct vec_slice
     }
     vec_slice(std::valarray<double>& v) : m_data(&v[0]), m_len(v.size()) { }
 
-    double* data() { return m_data; }
-    size_t size() const { return m_len; }
+    constexpr double* data() { return m_data; }
+    constexpr size_t size() const { return m_len; }
 
     double dot(vec_slice o) const
     {
@@ -160,13 +160,20 @@ struct mat_slice
 {
     constexpr mat_slice() = default;
     constexpr mat_slice(double* data, size_t rows, size_t cols) : m_data(data), m_rows(rows), m_cols(cols) { }
+    constexpr mat_slice(vec_slice data, size_t stride)
+        : m_data(data.data()), m_rows(data.size() / stride), m_cols(stride)
+    {
+#if !defined(NDEBUG) || defined(VEC_ENABLE_CHECKS)
+        if (data.size() % stride != 0) std::terminate();
+#endif
+    }
 
     double* data() { return m_data; }
     size_t size() const { return m_rows * m_cols; }
     size_t rows() const { return m_rows; }
     size_t cols() const { return m_cols; }
 
-    vec_slice operator[](size_t i)
+    vec_slice row(size_t i)
     {
 #if !defined(NDEBUG) || defined(VEC_ENABLE_CHECKS)
         if (i >= m_rows) std::terminate();
@@ -174,10 +181,17 @@ struct mat_slice
         return vec_slice(m_data + i * m_cols, m_cols);
     }
 
+    vec_slice last_row()
+    {
+#if !defined(NDEBUG) || defined(VEC_ENABLE_CHECKS)
+        if (m_rows == 0) std::terminate();
+#endif
+        return vec_slice(m_data + (m_rows - 1) * m_cols, m_cols);
+    }
+
     double* begin() { return m_data; }
     double* end() { return m_data + size(); }
 
-    mat_slice slice() { return *this; }
     vec_slice flat() { return {data(), size()}; }
 
 private:
