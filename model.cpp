@@ -8,31 +8,19 @@
 
 struct Nonlinear
 {
-    struct Eval
+    void calc(vec_slice in, vec_slice out) const
     {
-        // double[N]
-        vec out;
-        // double[N]
-        vec errs;
-    };
-
-    vec_slice calc(Eval& e, vec_slice input) const
-    {
-        e.out.realloc_uninitialized(input.size());
-        for (int i = 0; i < input.size(); ++i)
+        for (int i = 0; i < in.size(); ++i)
         {
-            e.out[i] = input[i] < 0 ? input[i] / 10 : input[i];
+            out[i] = in[i] < 0 ? in[i] / 10 : in[i];
         }
-        return e.out;
     }
-    vec_slice backprop(Eval& e, vec_slice input, vec_slice grad) const
+    void backprop(vec_slice errs, vec_slice in, vec_slice grad) const
     {
-        e.errs.realloc_uninitialized(grad.size());
-        for (int i = 0; i < input.size(); ++i)
+        for (int i = 0; i < in.size(); ++i)
         {
-            e.errs[i] = input[i] < 0 ? grad[i] / 10 : grad[i];
+            errs[i] = in[i] < 0 ? grad[i] / 10 : grad[i];
         }
-        return e.errs;
     }
 };
 
@@ -41,69 +29,65 @@ struct Layer
     // double[4][In+1][Out]
     vec m_data;
 
-    int num_deltas = 0;
-    int input_size = 0;
-    int output_size = 0;
+    int m_deltas = 0;
+    int m_input = 0;
+    int m_output = 0;
+    int m_min_io = 0;
 
-    mat_slice coefs() { return mat_slice(m_data.data(), input_size, output_size); }
-    mat_slice g1s() { return mat_slice(m_data.data() + input_size * output_size, input_size, output_size); }
-    mat_slice g2s() { return mat_slice(m_data.data() + 2 * input_size * output_size, input_size, output_size); }
-    mat_slice delta() { return mat_slice(m_data.data() + 3 * input_size * output_size, input_size, output_size); }
+    mat_slice coefs() { return mat_slice(m_data.data(), m_input, m_output); }
+    mat_slice g1s() { return mat_slice(m_data.data() + m_input * m_output, m_input, m_output); }
+    mat_slice g2s() { return mat_slice(m_data.data() + 2 * m_input * m_output, m_input, m_output); }
+    mat_slice delta() { return mat_slice(m_data.data() + 3 * m_input * m_output, m_input, m_output); }
 
-    struct Eval
+    int out_size() const { return m_output; }
+    int in_size() const { return m_input - 1; }
+
+    void calc(vec_slice input, vec_slice out)
     {
-        // double[In]
-        vec errs;
+        auto c = coefs();
+        auto r_init = c.row(m_input - 1);
 
-        // double[Out]
-        vec out;
-    };
+        for (size_t j = 0; j < m_output; ++j)
+        {
+            double acc = r_init[j];
+            for (size_t i = 0; i < m_input - 1; ++i)
+            {
+                acc += coefs().row(i)[j] * input[i];
+            }
+            out[j] = acc;
+        }
 
-    vec_slice calc(Eval& e, vec_slice input)
-    {
-        e.out.alloc_assign(coefs().row(input.size()));
-
-        size_t n = std::min(e.out.size(), input.size());
-        e.out.slice(0, n).add(input.slice(0, n));
-
-        vec_slice o(e.out);
-        for (size_t i = 0; i < input.size(); ++i)
-            o.fma(coefs().row(i), input[i]);
-
-        return e.out;
+        out.slice(0, m_min_io).add(input.slice(0, m_min_io));
     }
 
     void backprop_init()
     {
-        num_deltas = 0;
+        m_deltas = 0;
         delta().flat().assign(0.0);
     }
 
-    vec_slice backprop(Eval& e, vec_slice input, vec_slice grad)
+    void backprop(vec_slice errs, vec_slice input, vec_slice out, vec_slice grad)
     {
-        e.errs.realloc_uninitialized(input.size());
-        for (size_t j = 0; j < input.size(); ++j)
+        for (size_t j = 0; j < m_input - 1; ++j)
         {
-            e.errs.slice()[j] = grad.dot(coefs().row(j));
+            errs[j] = grad.dot(coefs().row(j));
             delta().row(j).fma(grad, input[j]);
         }
 
-        size_t n = std::min(e.errs.size(), grad.size());
-        e.errs.slice(0, n).add(grad.slice(0, n));
+        errs.slice(0, m_min_io).add(grad.slice(0, m_min_io));
 
         delta().last_row().add(grad);
 
-        ++num_deltas;
-        return e.errs;
+        ++m_deltas;
     }
 
     void learn(double learn_rate)
     {
-        if (num_deltas == 0) return;
+        if (m_deltas == 0) return;
 
         for (size_t i = 0; i < delta().rows(); ++i)
         {
-            delta().row(i).mult(1.0 / num_deltas);
+            delta().row(i).mult(1.0 / m_deltas);
             g1s().row(i).decay_average(delta().row(i), 0.1);
             g2s().row(i).decay_variance(delta().row(i), 0.001);
 
@@ -135,11 +119,12 @@ struct Layer
 
     void randomize(int input, int output)
     {
-        input_size = input + 1;
-        output_size = output;
-        m_data.realloc(input_size * output_size * 4, 0.0);
+        m_input = input + 1;
+        m_output = output;
+        m_min_io = std::min(input, output);
+        m_data.realloc(m_input * m_output * 4, 0.0);
         for (auto& v : coefs())
-            v = (rand() * 2.0 / RAND_MAX - 1) / input_size;
+            v = (rand() * 2.0 / RAND_MAX - 1) / m_input;
     }
 };
 
@@ -150,25 +135,33 @@ struct ReLULayer
 
     struct Eval
     {
-        Layer::Eval l;
-        Nonlinear::Eval n;
+        int m_out;
 
-        vec_slice out() { return n.out; }
-        vec_slice errs() { return l.errs; }
+        vec m_calc;
+        vec m_errs;
+
+        vec_slice out() { return m_calc.slice(m_out); }
+        vec_slice errs() { return m_errs.slice(m_out); }
+
+        vec_slice l_out() { return m_calc.slice(0, m_out); }
+        vec_slice n_errs() { return m_errs.slice(0, m_out); }
     };
 
     void randomize(int input, int output) { l.randomize(input, output); }
 
-    vec_slice calc(Eval& e, vec_slice input)
+    void calc(Eval& e, vec_slice input)
     {
-        l.calc(e.l, input);
-        return n.calc(e.n, e.l.out);
+        e.m_out = l.out_size();
+        e.m_calc.realloc_uninitialized(l.out_size() * 2);
+        l.calc(input, e.l_out());
+        n.calc(e.l_out(), e.out());
     }
     void backprop_init() { l.backprop_init(); }
-    vec_slice backprop(Eval& e, vec_slice input, vec_slice grad)
+    void backprop(Eval& e, vec_slice input, vec_slice grad)
     {
-        n.backprop(e.n, e.l.out, grad);
-        return l.backprop(e.l, input, e.n.errs);
+        e.m_errs.realloc_uninitialized(l.out_size() + l.in_size());
+        n.backprop(e.n_errs(), e.l_out(), grad);
+        l.backprop(e.errs(), input, e.l_out(), e.n_errs());
     }
 
     void learn(double learn_rate) { l.learn(learn_rate); }
@@ -275,47 +268,21 @@ struct PerYouCardInputModel
 struct PerCardOutputModel
 {
     ReLULayers l;
-    Layer l2;
     struct Eval
     {
         vec input;
         ReLULayers::Eval l;
-        Layer::Eval l2;
-        vec_slice out() { return l2.out; }
+        vec_slice out() { return l.out(); }
         vec_slice err() { return l.errs(); }
     };
 
-    void randomize(int input_size)
-    {
-        l.randomize(input_size, {8, 8}, 8);
-        l2.randomize(8, 1);
-    }
+    void randomize(int input_size) { l.randomize(input_size, {8, 8, 8}, 1); }
 
-    void calc(Eval& e)
-    {
-        l.calc(e.l, e.input);
-        l2.calc(e.l2, e.l.out());
-    }
-    void backprop_init()
-    {
-        l.backprop_init();
-        l2.backprop_init();
-    }
-    void backprop(Eval& e, vec_slice card_grad)
-    {
-        l2.backprop(e.l2, e.l.out(), card_grad);
-        l.backprop(e.l, e.input, e.l2.errs);
-    }
-    void learn(double lr)
-    {
-        l2.learn(lr);
-        l.learn(lr);
-    }
-    void normalize(double lr)
-    {
-        l2.normalize(lr);
-        l.normalize(lr);
-    }
+    void calc(Eval& e) { l.calc(e.l, e.input); }
+    void backprop_init() { l.backprop_init(); }
+    void backprop(Eval& e, vec_slice card_grad) { l.backprop(e.l, e.input, card_grad); }
+    void learn(double lr) { l.learn(lr); }
+    void normalize(double lr) { l.normalize(lr); }
 };
 
 struct Model final : IModel
@@ -328,13 +295,27 @@ struct Model final : IModel
     PerYouCardInputModel you_card_in_model;
     PerCardOutputModel card_out_model;
 
+    static constexpr int card_out_width = 8;
+    static constexpr int board_out_width = 10;
+    static constexpr int l3_out_width = 18;
+
+    struct LInput
+    {
+        vec data;
+
+        void realloc_uninitialized() { data.realloc_uninitialized(board_out_width + card_out_width); }
+
+        vec_slice all() { return data.slice(); }
+        vec_slice board() { return data.slice(0, board_out_width); }
+        vec_slice cards() { return data.slice(board_out_width); }
+    };
+
     struct Eval : IEval
     {
         ReLULayer::Eval b1;
         ReLULayers::Eval l;
-        Layer::Eval p;
 
-        vec l_input;
+        LInput l_input;
         vec l_grad;
 
         std::vector<PerCardInputModel::Eval> cards_in;
@@ -370,10 +351,6 @@ struct Model final : IModel
 
     virtual std::unique_ptr<IEval> make_eval() { return std::make_unique<Eval>(); }
 
-    static constexpr int card_out_width = 8;
-    static constexpr int board_out_width = 10;
-    static constexpr int l3_out_width = 18;
-
     void randomize(int board_size, int card_size)
     {
         b1.randomize(board_size, board_out_width);
@@ -388,9 +365,9 @@ struct Model final : IModel
     void calc_inner(Eval& e, Encoded& g, bool full)
     {
         b1.calc(e.b1, g.board());
-        e.l_input.realloc_uninitialized(board_out_width + card_out_width);
-        e.l_input.slice(0, board_out_width).assign(e.b1.out());
-        auto l_input_cards = e.l_input.slice(board_out_width);
+        e.l_input.realloc_uninitialized();
+        e.l_input.board().assign(e.b1.out());
+        auto l_input_cards = e.l_input.cards();
         l_input_cards.assign(0);
         e.cards_in.resize(g.me_cards);
         e.cards_out.resize(g.me_cards);
@@ -400,8 +377,6 @@ struct Model final : IModel
         {
             card_in_model.calc(e.cards_in[i], g.me_card(i));
             l_input_cards.add(e.cards_in[i].out());
-            e.cards_out[i].input.realloc_uninitialized(l3_out_width + card_out_width);
-            e.cards_out[i].input.slice(l3_out_width).assign(e.cards_in[i].out());
         }
         if (full)
         {
@@ -411,12 +386,13 @@ struct Model final : IModel
                 l_input_cards.add(e.you_cards_in[i].out());
             }
         }
-        l.calc(e.l, e.l_input);
-        p.calc(e.p, e.l.out());
+        l.calc(e.l, e.l_input.all());
         e.all_out.realloc_uninitialized(g.avail_actions());
-        e.all_out[0] = e.p.out[0];
+        p.calc(e.l.out(), e.all_out.slice(0, 1));
         for (int i = 0; i < g.me_cards; ++i)
         {
+            e.cards_out[i].input.realloc_uninitialized(l3_out_width + card_out_width);
+            e.cards_out[i].input.slice(l3_out_width).assign(e.cards_in[i].out());
             e.cards_out[i].input.slice(0, l3_out_width).assign(e.l.out());
             card_out_model.calc(e.cards_out[i]);
             e.all_out[i + 1] = e.cards_out[i].out()[0];
@@ -443,16 +419,15 @@ struct Model final : IModel
         vec_slice p_grad = grad.slice(0, 1);
         vec_slice cards_grad = grad.slice(1);
 
-        p.backprop(e.p, e.l.out(), p_grad);
-
-        e.l_grad.alloc_assign(e.p.errs);
+        e.l_grad.realloc_uninitialized(p.in_size());
+        p.backprop(e.l_grad, e.l.out(), e.all_out.slice(0, 1), p_grad);
 
         for (int i = 0; i < cards_grad.size(); ++i)
         {
             card_out_model.backprop(e.cards_out[i], cards_grad.slice(i, 1));
             e.l_grad.slice().add(e.cards_out[i].err().slice(0, l3_out_width));
         }
-        l.backprop(e.l, e.l_input, e.l_grad);
+        l.backprop(e.l, e.l_input.all(), e.l_grad);
 
         auto l_card_errs = e.l.errs().slice(board_out_width);
         if (full)
