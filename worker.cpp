@@ -8,6 +8,7 @@ std::atomic<bool> s_worker_exit = false;
 std::atomic<double> s_err[200] = {0};
 std::atomic<double> s_learn_rate = 0.0005;
 bool s_updated = false;
+bool s_replace_model = false;
 std::atomic<int> s_trials = 0;
 struct IModel* s_model;
 
@@ -55,13 +56,12 @@ void worker()
 {
     int update_tick = 0;
     int i_err = 0;
-    std::unique_ptr<IModel> m_storage;
+    std::unique_ptr<IModel> m;
     {
         std::lock_guard<std::mutex> lk(s_mutex);
-        m_storage = s_model->clone();
+        m = s_model->clone();
     }
     Game g;
-    IModel& m = *m_storage;
 
     std::vector<Turn> turns;
 
@@ -75,9 +75,9 @@ void worker()
         // if (total_error > (2 * total_s_err / std::size(s_err) + 1e-3))
         //    replay_game(m, turns);
         // else
-        play_game(g, m, turns);
+        play_game(g, *m, turns);
 
-        m.backprop_init();
+        m->backprop_init();
 
         // First, fill in the error values
         auto last_player_won =
@@ -92,7 +92,7 @@ void worker()
         turn.error_full.realloc(turn.input.avail_actions(), 0.0);
         turn.error_full[turn.chosen_action] = error * 10;
 
-        m.backprop(*turn.eval_full, turn.input, turn.error_full, true);
+        m->backprop(*turn.eval_full, turn.input, turn.error_full, true);
         total_error += error * error;
 
         for (int i = (int)turns.size() - 2; i >= 0; --i)
@@ -103,7 +103,7 @@ void worker()
             auto error = predicted - (1.0 - next_turn.eval_full->clamped_best_pct());
             turn.error_full.realloc(turn.input.avail_actions(), 0.0);
             turn.error_full[turn.chosen_action] = error * 10;
-            m.backprop(*turn.eval_full, turn.input, turn.error_full, true);
+            m->backprop(*turn.eval_full, turn.input, turn.error_full, true);
             total_error += error * error;
         }
 
@@ -111,11 +111,11 @@ void worker()
         {
             turn.error.realloc_uninitialized(turn.input.avail_actions());
             turn.error.slice().assign_sub(turn.eval->out(), turn.eval_full->out());
-            m.backprop(*turn.eval, turn.input, turn.error, false);
+            m->backprop(*turn.eval, turn.input, turn.error, false);
             total_error += turn.error.slice().dot(turn.error);
         }
 
-        m.learn(s_learn_rate);
+        m->learn(s_learn_rate);
 
         //// now learn
 
@@ -125,11 +125,19 @@ void worker()
         update_tick = (update_tick + 1) % 100;
         if (update_tick == 0)
         {
-            m.normalize(s_learn_rate);
+            m->normalize(s_learn_rate);
             std::lock_guard<std::mutex> lk(s_mutex);
-            delete s_model;
-            s_model = m.clone().release();
-            s_updated = true;
+            if (s_replace_model)
+            {
+                m = s_model->clone();
+                s_replace_model = false;
+            }
+            else
+            {
+                delete s_model;
+                s_model = m->clone().release();
+                s_updated = true;
+            }
         }
         ++s_trials;
     }

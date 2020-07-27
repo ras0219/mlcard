@@ -243,6 +243,9 @@ struct vec
     double* begin() { return m_data.get(); }
     double* end() { return m_data.get() + m_len; }
 
+    const double* begin() const { return m_data.get(); }
+    const double* end() const { return m_data.get() + m_len; }
+
     void realloc(size_t n, double v)
     {
         realloc_uninitialized(n);

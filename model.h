@@ -1,9 +1,11 @@
 #pragma once
 
 #include <memory>
+#include <string>
 
 struct Encoded;
 struct vec_slice;
+struct RJWriter;
 
 struct IEval
 {
@@ -27,6 +29,8 @@ struct IModel
     virtual void normalize(double learn_rate) = 0;
 
     virtual std::unique_ptr<IModel> clone() const = 0;
+    virtual void serialize(RJWriter& w) const = 0;
 };
 
 std::unique_ptr<IModel> make_model();
+std::unique_ptr<IModel> load_model(const std::string& s);

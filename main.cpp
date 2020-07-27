@@ -4,6 +4,7 @@
 #include "ai_play.h"
 #include "game.h"
 #include "model.h"
+#include "rjwriter.h"
 #include "vec.h"
 #include "worker.h"
 #include <FL/Fl.H>
@@ -23,11 +24,12 @@
 #include <FL/fl_draw.H>
 #include <atomic>
 #include <fmt/format.h>
+#include <fstream>
 #include <memory>
 #include <mutex>
-#include <rapidjson/stream.h>
 #include <rapidjson/writer.h>
 #include <shobjidl_core.h>
+#include <sstream>
 #include <stdio.h>
 #include <string>
 #include <thread>
@@ -279,8 +281,34 @@ void open_cb(Fl_Widget* w, void* v)
     PWSTR pszPath;
     hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszPath);
     if (!SUCCEEDED(hr)) return;
-    fmt::print(L"{}", std::wstring(pszPath));
+    std::wstring p(pszPath);
     CoTaskMemFree(pszPath);
+
+    std::stringstream ss;
+    std::ifstream is(p);
+    is.get(*ss.rdbuf());
+
+    try
+    {
+        auto model = load_model(ss.str());
+        {
+            std::lock_guard<std::mutex> lk(s_mutex);
+            delete s_model;
+            s_model = model.release();
+            s_replace_model = true;
+            s_updated = false;
+        }
+    }
+    catch (const std::exception& e)
+    {
+        fmt::print(L"Failed while loading model from {}: ", p);
+        fmt::print("{}\n", e.what());
+    }
+    catch (const char* e)
+    {
+        fmt::print(L"Failed while loading model from {}: ", p);
+        fmt::print("{}\n", e);
+    }
 }
 
 void save_cb(Fl_Widget* w, void* v)
@@ -311,8 +339,27 @@ void save_cb(Fl_Widget* w, void* v)
     hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszPath);
     if (!SUCCEEDED(hr)) return;
 
-    fmt::format(L"{}{}\n", pszPath, i == 1 ? L".json" : L"");
+    auto path = fmt::format(L"{}{}", pszPath, i == 1 ? L".json" : L"");
     CoTaskMemFree(pszPath);
+
+    StringBuffer s;
+    RJWriter wr(s);
+    {
+        std::lock_guard<std::mutex> lk(s_mutex);
+        s_model->serialize(wr);
+    }
+
+    try
+    {
+        std::ofstream os(path);
+        os.write(s.GetString(), s.GetSize());
+        fmt::print(L"Wrote {}\n", path);
+    }
+    catch (std::exception& e)
+    {
+        fmt::print(L"Failed to write {}: ", path);
+        fmt::print("{}", e.what());
+    }
 }
 
 int main(int argc, char* argv[])

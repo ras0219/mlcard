@@ -1,10 +1,38 @@
 #include "model.h"
 #include "game.h"
+#include "rjwriter.h"
 #include "vec.h"
 #include <algorithm>
 #include <atomic>
+#include <rapidjson/document.h>
 #include <rapidjson/writer.h>
 #include <vector>
+
+using rapidjson::Value;
+
+const Value& find_or_throw(const Value& doc, const char* key)
+{
+    auto it = doc.FindMember(key);
+    if (it == doc.MemberEnd()) throw std::runtime_error(fmt::format("could not find .{}", key));
+    return it->value;
+}
+
+void deserialize(vec& data, const rapidjson::Value& v)
+{
+    auto w = v.GetArray();
+    data.realloc_uninitialized(w.Size());
+    for (unsigned i = 0; i < w.Size(); ++i)
+    {
+        data[i] = w[i].GetDouble();
+    }
+}
+void serialize(const vec& data, RJWriter& w)
+{
+    w.StartArray();
+    for (auto d : data)
+        w.Double(d);
+    w.EndArray();
+}
 
 struct Nonlinear
 {
@@ -126,6 +154,33 @@ struct Layer
         for (auto& v : coefs())
             v = (rand() * 2.0 / RAND_MAX - 1) / m_input;
     }
+
+    void deserialize(const Value& v)
+    {
+        if (find_or_throw(v, "type") != "Layer") throw "Expected type Layer";
+        ::deserialize(m_data, find_or_throw(v, "data"));
+        m_deltas = find_or_throw(v, "deltas").GetInt();
+        m_input = find_or_throw(v, "input").GetInt();
+        m_output = find_or_throw(v, "output").GetInt();
+        m_min_io = find_or_throw(v, "min_io").GetInt();
+    }
+    void serialize(RJWriter& w) const
+    {
+        w.StartObject();
+        w.Key("type");
+        w.String("Layer");
+        w.Key("data");
+        ::serialize(m_data, w);
+        w.Key("deltas");
+        w.Int(m_deltas);
+        w.Key("input");
+        w.Int(m_input);
+        w.Key("output");
+        w.Int(m_output);
+        w.Key("min_io");
+        w.Int(m_min_io);
+        w.EndObject();
+    }
 };
 
 struct ReLULayer
@@ -155,6 +210,9 @@ struct ReLULayer
 
     void learn(double learn_rate) { l.learn(learn_rate); }
     void normalize(double learn_rate) { l.normalize(learn_rate); }
+
+    void deserialize(const Value& v) { l.deserialize(v); }
+    void serialize(RJWriter& w) const { l.serialize(w); }
 };
 struct ReLULayers
 {
@@ -268,6 +326,33 @@ struct ReLULayers
         for (auto& l : ls)
             l.normalize(learn_rate);
     }
+
+    void deserialize(const Value& v)
+    {
+        if (find_or_throw(v, "type") != "RELULayers") throw "Expected type RELULayers";
+        m_inner_size = find_or_throw(v, "inner_size").GetInt();
+        auto data = find_or_throw(v, "data").GetArray();
+        ls.resize(data.Size());
+        for (unsigned i = 0; i < data.Size(); ++i)
+        {
+            ls[i].deserialize(data[i]);
+        }
+    }
+
+    void serialize(RJWriter& w) const
+    {
+        w.StartObject();
+        w.Key("type");
+        w.String("RELULayers");
+        w.Key("inner_size");
+        w.Int(m_inner_size);
+        w.Key("data");
+        w.StartArray();
+        for (auto&& l : ls)
+            l.serialize(w);
+        w.EndArray();
+        w.EndObject();
+    }
 };
 
 struct PerCardInputModel
@@ -288,6 +373,8 @@ struct PerCardInputModel
     void backprop(Eval& e, vec_slice input) { l.backprop(e.l, input, e.grad); }
     void learn(double learn_rate) { l.learn(learn_rate); }
     void normalize(double learn_rate) { l.normalize(learn_rate); }
+    void deserialize(const Value& v) { l.deserialize(v); }
+    void serialize(RJWriter& w) const { l.serialize(w); }
 };
 
 struct PerYouCardInputModel
@@ -306,6 +393,8 @@ struct PerYouCardInputModel
     void backprop(Eval& e, vec_slice input, vec_slice grad) { l.backprop(e.l1, input, grad); }
     void learn(double lr) { l.learn(lr); }
     void normalize(double lr) { l.normalize(lr); }
+    void deserialize(const Value& v) { l.deserialize(v); }
+    void serialize(RJWriter& w) const { l.serialize(w); }
 };
 
 struct PerCardOutputModel
@@ -326,6 +415,8 @@ struct PerCardOutputModel
     void backprop(Eval& e, vec_slice card_grad) { l.backprop(e.l, e.input, card_grad); }
     void learn(double lr) { l.learn(lr); }
     void normalize(double lr) { l.normalize(lr); }
+    void deserialize(const Value& v) { l.deserialize(v); }
+    void serialize(RJWriter& w) const { l.serialize(w); }
 };
 
 struct Model final : IModel
@@ -509,12 +600,35 @@ struct Model final : IModel
         card_out_model.normalize(lr);
     }
 
-    void serialize(rapidjson::Writer<rapidjson::StringBuffer>& w)
+    virtual void serialize(RJWriter& w) const override
     {
         w.StartObject();
         w.Key("type");
         w.String("Model");
+        w.Key("b");
+        b.serialize(w);
+        w.Key("l");
+        l.serialize(w);
+        w.Key("p");
+        p.serialize(w);
+        w.Key("in");
+        card_in_model.serialize(w);
+        w.Key("you_in");
+        you_card_in_model.serialize(w);
+        w.Key("out");
+        card_out_model.serialize(w);
         w.EndObject();
+    }
+
+    void deserialize(const Value& doc)
+    {
+        if (find_or_throw(doc, "type") != "Model") throw "Expected type Model";
+        b.deserialize(find_or_throw(doc, "b"));
+        l.deserialize(find_or_throw(doc, "l"));
+        p.deserialize(find_or_throw(doc, "p"));
+        card_in_model.deserialize(find_or_throw(doc, "in"));
+        you_card_in_model.deserialize(find_or_throw(doc, "you_in"));
+        card_out_model.deserialize(find_or_throw(doc, "out"));
     }
 
     virtual std::unique_ptr<IModel> clone() const { return std::make_unique<Model>(*this); }
@@ -524,5 +638,14 @@ std::unique_ptr<IModel> make_model()
 {
     auto m = std::make_unique<Model>();
     m->randomize(Encoded::board_size, Encoded::card_size);
+    return m;
+}
+
+std::unique_ptr<IModel> load_model(const std::string& s)
+{
+    rapidjson::Document doc;
+    doc.Parse(s.c_str(), s.size());
+    auto m = std::make_unique<Model>();
+    m->deserialize(doc);
     return m;
 }
