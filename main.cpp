@@ -14,6 +14,7 @@
 #include <FL/Fl_Counter.H>
 #include <FL/Fl_Double_Window.H>
 #include <FL/Fl_File_Chooser.H>
+#include <FL/Fl_Help_View.H>
 #include <FL/Fl_Hold_Browser.H>
 #include <FL/Fl_Menu_Bar.H>
 #include <FL/Fl_Multi_Browser.H>
@@ -136,12 +137,12 @@ struct Game_Group : Fl_Group
 {
     Game_Group(int x, int y, int w, int h, const char* label = 0)
         : Fl_Group(x, y, w, h, label)
-        , m_turn_viewer(x, y + 22, w, (h - 22) / 2)
-        , m_gamelog(x, y + 22 + (h - 22) / 2, w, (h - 22) / 2 - 17, "Gamelog")
+        , m_turn_viewer(x, y + 22, w, 180)
+        , m_gamelog(x, y + 22 + 180, w, (h - 22) - 180 - 17, "Gamelog")
         , m_new_game(x + w - 80, y, 80, 20, "New Game")
         , m_ai_plays_p1(x, y, 50, 20, "AI P1")
         , m_ai_plays_p2(x + 52, y, 50, 20, "AI P2")
-        , m_resize_box(x + w / 2 - 20, y + 22 + (h - 22) / 2 + 1, 40, (h - 22) / 2 - 17)
+        , m_resize_box(x + w / 2 - 20, y + 22 + 180 + 1, 40, (h - 22) / 2 - 180 - 17)
     {
         m_ai_plays_p1.value(1);
         m_ai_plays_p1.callback([](Fl_Widget* w, void*) { ((Game_Group*)w->parent())->update_game(); });
@@ -180,24 +181,11 @@ struct Game_Group : Fl_Group
             m_turn_viewer.m_actions.add(actions[i].c_str(), (void*)i);
         }
         m_turn_viewer.m_cur_turn.clear();
-        switch (g.cur_result())
+        m_turn_viewer.m_cur_turn.format_char(0);
+        for (auto&& l : g.format_public_lines())
         {
-            case Game::Result::p1_win: m_turn_viewer.m_cur_turn.add("@.Player 1 won"); break;
-            case Game::Result::p2_win: m_turn_viewer.m_cur_turn.add("@.Player 2 won"); break;
-            case Game::Result::timeout: m_turn_viewer.m_cur_turn.add("@.Timeout"); break;
-            default: break;
+            m_turn_viewer.m_cur_turn.add(l.c_str());
         }
-        if (g.player2_turn)
-            m_turn_viewer.m_cur_turn.add(fmt::format("@.Turn {}: Player 2's turn", g.turn + 1).c_str());
-        else
-            m_turn_viewer.m_cur_turn.add(fmt::format("@.Turn {}: Player 1's turn", g.turn + 1).c_str());
-        m_turn_viewer.m_cur_turn.add(fmt::format("@.P1 Health: {}", g.p1.health).c_str());
-        m_turn_viewer.m_cur_turn.add(fmt::format("@.P1 Mana: {}", g.p1.mana).c_str());
-        m_turn_viewer.m_cur_turn.add(fmt::format("@.P1 Creature: {}", g.p1.creature).c_str());
-        m_turn_viewer.m_cur_turn.add("");
-        m_turn_viewer.m_cur_turn.add(fmt::format("@.P2 Health: {}", g.p2.health).c_str());
-        m_turn_viewer.m_cur_turn.add(fmt::format("@.P2 Mana: {}", g.p2.mana).c_str());
-        m_turn_viewer.m_cur_turn.add(fmt::format("@.P2 Creature: {}", g.p2.creature).c_str());
     }
 
     void on_player_action()
@@ -392,12 +380,26 @@ int main(int argc, char* argv[])
     win->resizable(new Fl_Box(10, 10, win->w() - 20, win->h() - 20));
     win->show(argc, argv);
 
-    auto win2 = std::make_unique<Fl_Double_Window>(490, 400, "MLCard Game");
+    auto win2 = std::make_unique<Fl_Double_Window>(600, 700, "MLCard Game");
     win2->begin();
     s_gamegroup = new Game_Group(10, 10, win2->w() - 20, win2->h() - 20);
     win2->end();
     win2->resizable(new Fl_Box(10, 10, win2->w() - 20, win2->h() - 20));
     win2->show();
+
+    auto win3 = std::make_unique<Fl_Double_Window>(600, 700, "How to Play");
+    win3->begin();
+    auto hv = new Fl_Help_View(10, 10, win3->w() - 20, win3->h() - 20);
+    hv->value(Game::help_html("index"));
+    hv->textsize(16);
+    hv->link([](Fl_Widget* w, const char* uri) -> const char* {
+        auto self = (Fl_Help_View*)w;
+        self->value(Game::help_html(uri));
+        return NULL;
+    });
+    win3->end();
+    win3->resizable(new Fl_Box(10, 10, win3->w() - 20, win3->h() - 20));
+    win3->show();
 
     std::thread th(worker);
     auto rc = Fl::run();

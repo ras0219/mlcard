@@ -5,6 +5,16 @@
 #include <string>
 #include <vector>
 
+enum class ArtifactType
+{
+    DirectImmune,
+    CreatureImmune,
+    MaxMana,
+    HealCauseDamage,
+    LandCauseDamage,
+    Count,
+};
+
 struct Card
 {
     enum class Type
@@ -13,16 +23,22 @@ struct Card
         Direct,
         Heal,
         Land,
+        Artifact,
+        Count,
     };
 
     Type type;
 
-    int value;
+    union
+    {
+        int value;
+        ArtifactType artifact;
+    };
 
     void randomize();
     void encode(vec_slice x) const;
 
-    static constexpr size_t encoded_size = 5;
+    static constexpr size_t encoded_size = (size_t)Type::Count + (size_t)ArtifactType::Count;
 };
 
 struct Player
@@ -30,10 +46,10 @@ struct Player
     int health = 20;
     int mana = 1;
     int creature = 0;
-    int def = 0;
+    ArtifactType artifact = ArtifactType::Count;
     std::vector<Card> avail;
 
-    static constexpr size_t encoded_size = 4;
+    static constexpr size_t encoded_size = 4 + (size_t)ArtifactType::Count;
 
     void encode(vec_slice x) const;
     void encode_cards(vec_slice x) const;
@@ -76,7 +92,8 @@ struct Game
     void advance(int action);
 
     std::string format() const;
-
+    std::vector<std::string> format_public_lines() const;
+    static const char* help_html(std::string_view pg);
     std::vector<std::string> format_actions();
 
     enum class Result

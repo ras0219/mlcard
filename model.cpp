@@ -366,7 +366,7 @@ struct PerCardInputModel
         vec_slice out() { return l.out(); }
     };
 
-    void randomize(int input_size, int output_size) { l.randomize(input_size, {8}, output_size); }
+    void randomize(int input_size, int output_size) { l.randomize(input_size, {input_size, input_size}, output_size); }
 
     void calc(Eval& e, vec_slice input) { l.calc(e.l, input); }
     void backprop_init() { l.backprop_init(); }
@@ -386,7 +386,7 @@ struct PerYouCardInputModel
         vec_slice out() { return l1.out(); }
     };
 
-    void randomize(int input_size, int output_size) { l.randomize(input_size, {8}, output_size); }
+    void randomize(int input_size, int output_size) { l.randomize(input_size, {input_size, input_size}, output_size); }
 
     void calc(Eval& e, vec_slice input) { l.calc(e.l1, input); }
     void backprop_init() { l.backprop_init(); }
@@ -408,7 +408,7 @@ struct PerCardOutputModel
         vec_slice err() { return l.errs(); }
     };
 
-    void randomize(int input_size) { l.randomize(input_size, {8, 8, 8}, 1); }
+    void randomize(int input_size) { l.randomize(input_size, {input_size, input_size}, 1); }
 
     void calc(Eval& e) { l.calc(e.l, e.input); }
     void backprop_init() { l.backprop_init(); }
@@ -429,9 +429,9 @@ struct Model final : IModel
     PerYouCardInputModel you_card_in_model;
     PerCardOutputModel card_out_model;
 
-    static constexpr int card_out_width = 8;
-    static constexpr int board_out_width = 10;
-    static constexpr int l3_out_width = 18;
+    static constexpr int card_out_width = 10;
+    static constexpr int board_out_width = 20;
+    static constexpr int l3_out_width = 20;
 
     struct LInput
     {
@@ -495,8 +495,8 @@ struct Model final : IModel
 
     void randomize(int board_size, int card_size)
     {
-        b.randomize(board_size, {board_out_width}, board_out_width);
-        l.randomize(board_out_width + card_out_width, {20, 22, 24, 26}, l3_out_width);
+        b.randomize(board_size, {board_size, board_out_width}, board_out_width);
+        l.randomize(board_out_width + card_out_width, {board_out_width + card_out_width, 28, 24, 22}, l3_out_width);
         p.randomize(l3_out_width, 1);
         card_in_model.randomize(card_size, card_out_width);
         card_out_model.randomize(l3_out_width + card_out_width);
