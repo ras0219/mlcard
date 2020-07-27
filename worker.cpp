@@ -30,9 +30,9 @@ static void play_game(Game& g, IModel& m, std::vector<Turn>& turns)
 
         // choose action to take
         auto r = rand() * 1.0 / RAND_MAX;
-        if (r < 0.3)
+        if (r < 0.2)
         {
-            turn.chosen_action = static_cast<int>(r * turn.input.avail_actions() / 0.3);
+            turn.chosen_action = static_cast<int>(r * turn.input.avail_actions() / 0.2);
         }
         else
         {
@@ -95,16 +95,19 @@ void worker()
         m->backprop(*turn.eval_full, turn.input, turn.error_full, true);
         total_error += error * error;
 
+        double next_turn_expected = static_cast<double>(last_player_won);
         for (int i = (int)turns.size() - 2; i >= 0; --i)
         {
             auto& turn = turns[i];
             auto& next_turn = turns[i + 1];
             auto predicted = turn.eval_full->pct_for_action(turn.chosen_action);
-            auto error = predicted - (1.0 - next_turn.eval_full->clamped_best_pct());
+            auto expected = (1.0 - next_turn.eval_full->clamped_best_pct(next_turn.chosen_action, next_turn_expected));
+            auto error = predicted - expected;
             turn.error_full.realloc(turn.input.avail_actions(), 0.0);
             turn.error_full[turn.chosen_action] = error * 10;
             m->backprop(*turn.eval_full, turn.input, turn.error_full, true);
             total_error += error * error;
+            next_turn_expected = expected;
         }
 
         for (auto&& turn : turns)

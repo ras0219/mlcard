@@ -4,7 +4,7 @@
 
 void Card::randomize()
 {
-    type = (Type)(rand() % 3);
+    type = (Type)(rand() % 4);
     if (type == Type::Land)
         value = 10;
     else
@@ -31,11 +31,11 @@ void Player::encode_cards(vec_slice x) const
         avail[i].encode(c);
     }
 }
-void Player::init()
+void Player::init(bool p1)
 {
     *this = Player();
     avail.clear();
-    avail.resize(5);
+    avail.resize(p1 ? 3 : 5);
     for (auto&& c : avail)
         c.randomize();
 }
@@ -74,12 +74,10 @@ Encoded Game::encode() const
 
 void Game::init()
 {
-    p1.init();
-    p2.init();
+    p1.init(true);
+    p2.init(false);
     player2_turn = false;
     turn = 0;
-    p2.mana = 1;
-    p1.mana = 1;
 }
 
 void Game::advance(int action)
@@ -108,6 +106,10 @@ void Game::advance(int action)
             else if (card.type == Card::Type::Direct)
             {
                 you.health -= card.value;
+            }
+            else if (card.type == Card::Type::Heal)
+            {
+                me.health += card.value;
             }
             else
                 std::terminate();
@@ -166,6 +168,10 @@ std::vector<std::string> Game::format_actions()
             else if (p.avail[i].type == Card::Type::Direct)
             {
                 actions.push_back(fmt::format("{} Damage {}{}", prefix, p.avail[i].value, suffix));
+            }
+            else if (p.avail[i].type == Card::Type::Heal)
+            {
+                actions.push_back(fmt::format("{} Heal {}{}", prefix, p.avail[i].value, suffix));
             }
             else
                 std::terminate();

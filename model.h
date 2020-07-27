@@ -14,6 +14,7 @@ struct IEval
     virtual int best_action() = 0;
     virtual double pct_for_action(int i) = 0;
     virtual double clamped_best_pct() = 0;
+    virtual double clamped_best_pct(int replace_i, double replace_pct) = 0;
     virtual vec_slice out() = 0;
 };
 

@@ -481,6 +481,14 @@ struct Model final : IModel
         }
 
         virtual double clamped_best_pct() override { return std::max(0.0, std::min(1.0, max_out())); }
+        virtual double clamped_best_pct(int i, double p) override
+        {
+            for (int x = 0; x < i; ++x)
+                p = std::max(p, all_out[x]);
+            for (int x = i + 1; x < all_out.size(); ++x)
+                p = std::max(p, all_out[x]);
+            return std::max(0.0, std::min(1.0, p));
+        }
     };
 
     virtual std::unique_ptr<IEval> make_eval() { return std::make_unique<Eval>(); }

@@ -11,6 +11,7 @@ struct Card
     {
         Creature,
         Direct,
+        Heal,
         Land,
     };
 
@@ -25,17 +26,17 @@ struct Card
 struct Player
 {
     int health = 20;
-    int mana = 0;
+    int mana = 1;
     int creature = 0;
     int def = 0;
     std::vector<Card> avail;
 
     static constexpr size_t encoded_size = 4;
-    static constexpr size_t encoded_card_size = 3;
+    static constexpr size_t encoded_card_size = 4;
 
     void encode(vec_slice x) const;
     void encode_cards(vec_slice x) const;
-    void init();
+    void init(bool p1);
 
     int cards() const { return (int)avail.size(); }
 };
