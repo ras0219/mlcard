@@ -13,6 +13,11 @@
 #define VEC_CHECK_BOUNDS(X)
 #endif
 
+#define VEC_STACK_VEC(X, SZ)                                                                                           \
+    auto X##_size = (SZ);                                                                                              \
+    double* X##_storage = (double*)_alloca(sizeof(double) * X##_size);                                                 \
+    vec_slice X(X##_storage, X##_size)
+
 struct mat_slice;
 
 struct vec_slice
@@ -56,6 +61,10 @@ struct vec_slice
     std::pair<vec_slice, vec_slice> split(size_t offset)
     {
         return {{m_data, offset}, {m_data + offset, m_len - offset}};
+    }
+    std::pair<vec_slice, vec_slice> rsplit(size_t offset)
+    {
+        return {{m_data, m_len - offset}, {m_data + m_len - offset, offset}};
     }
 
 #define VEC_EOP(RHS)                                                                                                   \

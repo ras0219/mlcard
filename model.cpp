@@ -133,35 +133,24 @@ struct ReLULayer
     Layer l;
     Nonlinear n;
 
-    struct Eval
-    {
-        int m_out;
-
-        vec m_calc;
-        vec m_errs;
-
-        vec_slice out() { return m_calc.slice(m_out); }
-        vec_slice errs() { return m_errs.slice(m_out); }
-
-        vec_slice l_out() { return m_calc.slice(0, m_out); }
-        vec_slice n_errs() { return m_errs.slice(0, m_out); }
-    };
-
     void randomize(int input, int output) { l.randomize(input, output); }
 
-    void calc(Eval& e, vec_slice input)
+    int in_size() const { return l.in_size(); }
+    int inner_size() const { return l.out_size(); }
+    int out_size() const { return l.out_size(); }
+
+    void calc(vec_slice in, vec_slice inner, vec_slice out)
     {
-        e.m_out = l.out_size();
-        e.m_calc.realloc_uninitialized(l.out_size() * 2);
-        l.calc(input, e.l_out());
-        n.calc(e.l_out(), e.out());
+        l.calc(in, inner);
+        n.calc(inner, out);
     }
     void backprop_init() { l.backprop_init(); }
-    void backprop(Eval& e, vec_slice input, vec_slice grad)
+    void backprop(vec_slice errs, vec_slice in, vec_slice inner, vec_slice out, vec_slice grad)
     {
-        e.m_errs.realloc_uninitialized(l.out_size() + l.in_size());
-        n.backprop(e.n_errs(), e.l_out(), grad);
-        l.backprop(e.errs(), input, e.l_out(), e.n_errs());
+        VEC_STACK_VEC(tmp, l.out_size());
+
+        n.backprop(tmp, inner, grad);
+        l.backprop(errs, in, inner, tmp);
     }
 
     void learn(double learn_rate) { l.learn(learn_rate); }
@@ -169,26 +158,45 @@ struct ReLULayer
 };
 struct ReLULayers
 {
-    std::vector<ReLULayer> ls;
-
     struct Eval
     {
-        std::vector<ReLULayer::Eval> l;
+        vec m_data;
+        int m_inner_size = 0;
+        int m_out_size = 0;
 
-        auto out() { return l.back().out(); }
-        auto errs() { return l.front().errs(); }
+        void realloc(int errs_size, int inner_size, int out_size)
+        {
+            m_inner_size = inner_size;
+            m_out_size = out_size;
+            m_data.realloc_uninitialized(inner_size + out_size + errs_size);
+        }
+
+        vec_slice inner() { return m_data.slice(0, m_inner_size); }
+        vec_slice out() { return m_data.slice(m_inner_size, m_out_size); }
+        vec_slice errs() { return m_data.slice(m_inner_size + m_out_size); }
     };
+
+    std::vector<ReLULayer> ls;
+    int m_inner_size = 0;
+
+    int in_size() const { return ls[0].in_size(); }
+    int out_size() const { return ls.back().out_size(); }
+    int inner_size() const { return m_inner_size; }
 
     void randomize(int input, std::initializer_list<int> middle, int output)
     {
+        m_inner_size = 0;
         for (auto sz : middle)
         {
             ls.emplace_back();
             ls.back().randomize(input, sz);
             input = sz;
+            m_inner_size += ls.back().inner_size();
+            m_inner_size += sz;
         }
         ls.emplace_back();
         ls.back().randomize(input, output);
+        m_inner_size += ls.back().inner_size();
     }
 
     void backprop_init()
@@ -197,24 +205,58 @@ struct ReLULayers
             l.backprop_init();
     }
 
-    vec_slice calc(Eval& e, vec_slice in)
+    void calc(Eval& e, vec_slice in)
     {
-        e.l.resize(ls.size());
-        for (int i = 0; i < ls.size(); ++i)
-        {
-            ls[i].calc(e.l[i], in);
-            in = e.l[i].out();
-        }
-        return in;
+        e.realloc(in_size(), inner_size(), out_size());
+        this->calc(in, e.inner(), e.out());
     }
-    void backprop(Eval& e, vec_slice in, vec_slice grad)
+
+    void calc(vec_slice in, vec_slice inner, vec_slice out)
     {
-        for (intptr_t i = ls.size() - 1; i > 0; --i)
+        for (int i = 0; i < ls.size() - 1; ++i)
         {
-            ls[i].backprop(e.l[i], e.l[i - 1].out(), grad);
-            grad = e.l[i].errs();
+            auto [cur_inner, x] = inner.split(ls[i].inner_size());
+            auto [cur_out, new_inner] = x.split(ls[i].out_size());
+            ls[i].calc(in, cur_inner, cur_out);
+            in = cur_out;
+            inner = new_inner;
         }
-        ls[0].backprop(e.l[0], in, grad);
+        ls.back().calc(in, inner, out);
+    }
+
+    void backprop(Eval& e, vec_slice in, vec_slice grad) { this->backprop(e.errs(), in, e.inner(), e.out(), grad); }
+    void backprop(vec_slice errs, vec_slice in, vec_slice inner, vec_slice out, vec_slice grad)
+    {
+        if (ls.size() == 0)
+        {
+            std::terminate();
+        }
+        else if (ls.size() == 1)
+        {
+            ls[0].backprop(errs, in, inner, out, grad);
+            return;
+        }
+        else
+        {
+            int max_in = 0;
+            for (int i = 1; i < ls.size(); ++i)
+                max_in += ls[i].in_size();
+
+            VEC_STACK_VEC(tmp, max_in);
+
+            for (intptr_t i = ls.size() - 1; i > 0; --i)
+            {
+                auto [x, cur_inner] = inner.rsplit(ls[i].inner_size());
+                auto [new_inner, cur_in] = x.rsplit(ls[i].in_size());
+                auto [new_tmp, cur_errs] = tmp.rsplit(ls[i].in_size());
+                ls[i].backprop(cur_errs, cur_in, cur_inner, out, grad);
+                grad = cur_errs;
+                inner = new_inner;
+                out = cur_in;
+                tmp = new_tmp;
+            }
+            ls[0].backprop(errs, in, inner, out, grad);
+        }
     }
     void learn(double learn_rate)
     {
@@ -235,6 +277,7 @@ struct PerCardInputModel
     {
         vec grad;
         ReLULayers::Eval l;
+
         vec_slice out() { return l.out(); }
     };
 
@@ -287,7 +330,7 @@ struct PerCardOutputModel
 
 struct Model final : IModel
 {
-    ReLULayer b1;
+    ReLULayers b;
     ReLULayers l;
     Layer p;
 
@@ -312,7 +355,7 @@ struct Model final : IModel
 
     struct Eval : IEval
     {
-        ReLULayer::Eval b1;
+        ReLULayers::Eval b;
         ReLULayers::Eval l;
 
         LInput l_input;
@@ -353,7 +396,7 @@ struct Model final : IModel
 
     void randomize(int board_size, int card_size)
     {
-        b1.randomize(board_size, board_out_width);
+        b.randomize(board_size, {board_out_width}, board_out_width);
         l.randomize(board_out_width + card_out_width, {20, 22, 24, 26}, l3_out_width);
         p.randomize(l3_out_width, 1);
         card_in_model.randomize(card_size, card_out_width);
@@ -364,9 +407,9 @@ struct Model final : IModel
     virtual void calc(IEval& e, Encoded& g, bool full) override { calc_inner((Eval&)e, g, full); }
     void calc_inner(Eval& e, Encoded& g, bool full)
     {
-        b1.calc(e.b1, g.board());
+        b.calc(e.b, g.board());
         e.l_input.realloc_uninitialized();
-        e.l_input.board().assign(e.b1.out());
+        e.l_input.board().assign(e.b.out());
         auto l_input_cards = e.l_input.cards();
         l_input_cards.assign(0);
         e.cards_in.resize(g.me_cards);
@@ -401,7 +444,7 @@ struct Model final : IModel
 
     virtual void backprop_init() override
     {
-        b1.backprop_init();
+        b.backprop_init();
         l.backprop_init();
         p.backprop_init();
 
@@ -443,11 +486,11 @@ struct Model final : IModel
             e.cards_in[i].grad.slice().assign_add(l_card_errs, e.cards_out[i].err().slice(l3_out_width));
             card_in_model.backprop(e.cards_in[i], g.me_card(i));
         }
-        b1.backprop(e.b1, g.board(), e.l.errs().slice(0, board_out_width));
+        b.backprop(e.b, g.board(), e.l.errs().slice(0, board_out_width));
     }
     void learn(double lr)
     {
-        b1.learn(lr);
+        b.learn(lr);
         l.learn(lr);
         p.learn(lr);
 
@@ -458,7 +501,7 @@ struct Model final : IModel
 
     void normalize(double lr)
     {
-        b1.normalize(lr);
+        b.normalize(lr);
         l.normalize(lr);
         p.normalize(lr);
         card_in_model.normalize(lr);
