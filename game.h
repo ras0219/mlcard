@@ -21,6 +21,8 @@ struct Card
 
     void randomize();
     void encode(vec_slice x) const;
+
+    static constexpr size_t encoded_size = 5;
 };
 
 struct Player
@@ -32,7 +34,6 @@ struct Player
     std::vector<Card> avail;
 
     static constexpr size_t encoded_size = 4;
-    static constexpr size_t encoded_card_size = 4;
 
     void encode(vec_slice x) const;
     void encode_cards(vec_slice x) const;
@@ -44,7 +45,7 @@ struct Player
 struct Encoded
 {
     static constexpr size_t board_size = 2 + Player::encoded_size * 2;
-    static constexpr size_t card_size = Player::encoded_card_size;
+    static constexpr size_t card_size = Card::encoded_size;
 
     vec data;
 

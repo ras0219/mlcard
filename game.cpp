@@ -22,12 +22,13 @@ void Player::encode(vec_slice x) const
     x[1] = mana / 10.0;
     x[2] = creature / 10.0;
     x[3] = def / 10.0;
+    x[4] = avail.size() / 10.0;
 }
 void Player::encode_cards(vec_slice x) const
 {
     for (size_t i = 0; i < avail.size(); ++i)
     {
-        auto c = x.slice(i * encoded_card_size, encoded_card_size);
+        auto c = x.slice(i * Card::encoded_size, Card::encoded_size);
         avail[i].encode(c);
     }
 }
