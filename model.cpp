@@ -130,12 +130,12 @@ struct Layer
 
     void normalize(double learn_rate)
     {
-        auto l1_norm = 1e-11 * learn_rate;
+        auto l1_norm = 1e-9 * learn_rate;
 
         for (auto& e : coefs())
         {
             // L2 normalization
-            e *= (1 - 1e-11 * learn_rate);
+            e *= (1 - 1e-9 * learn_rate);
             // L1 normalization
             if (e < -l1_norm)
                 e += l1_norm;

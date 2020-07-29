@@ -438,6 +438,25 @@ struct Tournament_Group : Fl_Group
                                       .c_str());
             }
         }
+        m_browser.add("");
+        if (num_models > 1)
+        {
+            for (int i = 0; i < num_models; ++i)
+            {
+                double winpct = 0;
+                for (int j = 0; j < num_models; ++j)
+                {
+                    if (j == i) continue;
+                    const auto& d = data[i + j * num_models];
+                    winpct += 100.0 * d.first / (d.first + d.second);
+
+                    const auto& d2 = data[j + i * num_models];
+                    winpct += 100.0 * d2.second / (d2.first + d2.second);
+                }
+                m_browser.add(fmt::format("m{} overall: {}%", i, winpct / 2 / (num_models - 1)).c_str());
+            }
+        }
+
         m_browser.damage(FL_DAMAGE_ALL);
         m_browser.redraw();
     }
@@ -496,9 +515,15 @@ int main(int argc, char* argv[])
     s_workers.push_back(std::make_unique<Worker>());
     s_workers.push_back(std::make_unique<Worker>());
     s_workers.push_back(std::make_unique<Worker>());
+    s_workers.push_back(std::make_unique<Worker>());
+    s_workers.push_back(std::make_unique<Worker>());
+    s_workers.push_back(std::make_unique<Worker>());
     s_workers[0]->replace_model(make_model(default_model_dims()));
-    s_workers[1]->replace_model(make_model(medium_model_dims()));
-    s_workers[2]->replace_model(make_model(small_model_dims()));
+    s_workers[1]->replace_model(make_model(default_model_dims()));
+    s_workers[2]->replace_model(make_model(medium_model_dims()));
+    s_workers[3]->replace_model(make_model(medium_model_dims()));
+    s_workers[4]->replace_model(make_model(small_model_dims()));
+    s_workers[5]->replace_model(make_model(small_model_dims()));
 
     auto win = std::make_unique<Fl_Double_Window>(490, 400, "MLCard");
     win->begin();
@@ -533,7 +558,7 @@ int main(int argc, char* argv[])
     winx->begin();
     s_tgroup = new Tournament_Group(10, 10, winx->w() - 20, winx->h() - 20);
     winx->end();
-    win->resizable(new Fl_Box(10, 10, win->w() - 20, win->h() - 20));
+    winx->resizable(new Fl_Box(10, 10, winx->w() - 20, winx->h() - 20));
     winx->show();
 
     auto win2 = std::make_unique<Fl_Double_Window>(600, 700, "MLCard Game");
