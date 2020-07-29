@@ -41,6 +41,8 @@
 
 using namespace rapidjson;
 
+std::vector<std::unique_ptr<Worker>> s_workers;
+
 struct Graph : Fl_Widget
 {
     Graph(int x, int y, int w, int h, const char* label = 0) : Fl_Widget(x, y, w, h, label) { }
@@ -91,7 +93,7 @@ struct MLStats_Group : Fl_Group
     {
         m_learn_rate.step(0.00001, 0.0001);
         m_learn_rate.bounds(0.0, 0.01);
-        m_learn_rate.value(s_learn_rate);
+        m_learn_rate.value(s_workers[0]->m_learn_rate);
 
         this->resizable(&m_resize_box);
         this->end();
@@ -150,10 +152,7 @@ struct Game_Group : Fl_Group
         m_ai_plays_p2.callback([](Fl_Widget* w, void*) { ((Game_Group*)w->parent())->update_game(); });
         m_new_game.callback([](Fl_Widget* w, void*) {
             auto& self = *(Game_Group*)w->parent();
-            {
-                std::lock_guard<std::mutex> lk(s_mutex);
-                self.cur_model = s_model->clone();
-            }
+            self.cur_model = s_workers[0]->clone_model();
             self.g.init();
             self.turns.clear();
             self.m_gamelog.clear();
@@ -279,13 +278,7 @@ void open_cb(Fl_Widget* w, void* v)
     try
     {
         auto model = load_model(ss.str());
-        {
-            std::lock_guard<std::mutex> lk(s_mutex);
-            delete s_model;
-            s_model = model.release();
-            s_replace_model = true;
-            s_updated = false;
-        }
+        s_workers[0]->replace_model(std::move(model));
     }
     catch (const std::exception& e)
     {
@@ -330,15 +323,12 @@ void save_cb(Fl_Widget* w, void* v)
     auto path = fmt::format(L"{}{}", pszPath, i == 1 ? L".json" : L"");
     CoTaskMemFree(pszPath);
 
-    StringBuffer s;
-    RJWriter wr(s);
-    {
-        std::lock_guard<std::mutex> lk(s_mutex);
-        s_model->serialize(wr);
-    }
-
     try
     {
+        StringBuffer s;
+        RJWriter wr(s);
+        s_workers[0]->serialize_model(wr);
+
         std::ofstream os(path);
         os.write(s.GetString(), s.GetSize());
         fmt::print(L"Wrote {}\n", path);
@@ -350,10 +340,165 @@ void save_cb(Fl_Widget* w, void* v)
     }
 }
 
+struct Tournament_Group : Fl_Group
+{
+    Tournament_Group(int x, int y, int w, int h, const char* label = 0)
+        : Fl_Group(x, y, w, h, label)
+        , m_button(x, y, w, 20, "Run tournament")
+        , m_browser(x, y + 30, w, h - 10 - 30 - 17, "AI comparison")
+    {
+        m_button.callback([](Fl_Widget* w, void*) { ((Tournament_Group*)w->parent())->run_tournament(); });
+        this->resizable(&m_browser);
+        this->end();
+    }
+    ~Tournament_Group()
+    {
+        exit_worker = true;
+        if (th.joinable()) th.join();
+    }
+
+    void run_tournament()
+    {
+        std::lock_guard<std::mutex> lk(m);
+        updated = false;
+        restart = true;
+        data.clear();
+        temp_models.clear();
+        for (auto&& w : s_workers)
+            temp_models.push_back(w->clone_model());
+
+        num_models = temp_models.size();
+        data.resize(num_models * num_models);
+
+        if (!th.joinable())
+        {
+            th = std::thread(&Tournament_Group::work, this);
+        }
+    }
+
+    void work()
+    {
+        std::vector<std::pair<int, int>> local_data;
+        std::vector<std::unique_ptr<IModel>> local_models;
+        int i = 0;
+        while (!exit_worker)
+        {
+            if (restart || !updated)
+            {
+                std::lock_guard<std::mutex> lk(m);
+                if (restart)
+                {
+                    local_data = data;
+                    local_models = std::move(temp_models);
+                    restart = false;
+                }
+                else if (!updated)
+                {
+                    data = local_data;
+                    updated = true;
+                }
+            }
+            i++;
+            if (i >= local_data.size()) i = 0;
+
+            auto [x, y] = run_100(*local_models[i % local_models.size()], *local_models[i / local_models.size()]);
+            local_data[i].first += x;
+            local_data[i].second += y;
+        }
+    }
+
+    std::atomic<bool> updated = false;
+    std::atomic<bool> restart = false;
+    std::atomic<bool> exit_worker = false;
+    std::mutex m;
+    std::vector<std::pair<int, int>> data;
+    size_t num_models = 0;
+    std::vector<std::unique_ptr<IModel>> temp_models;
+    std::thread th;
+
+    void on_idle()
+    {
+        if (!updated) return;
+        std::lock_guard<std::mutex> lk(m);
+        updated = false;
+        m_browser.clear();
+        m_browser.add("Tournament Results:");
+        for (int i = 0; i < num_models; ++i)
+        {
+            for (int j = 0; j < num_models; ++j)
+            {
+                const auto& d = data[i + j * num_models];
+                if (d.first + d.second > 0)
+                    m_browser.add(fmt::format("m{} vs m{}: {} vs {}: {}%",
+                                              i,
+                                              j,
+                                              d.first,
+                                              d.second,
+                                              100.0 * d.first / (d.first + d.second))
+                                      .c_str());
+            }
+        }
+        m_browser.damage(FL_DAMAGE_ALL);
+        m_browser.redraw();
+    }
+
+    std::pair<int, int> run_100(IModel& m1, IModel& m2)
+    {
+        Game g;
+        std::vector<Turn> turns;
+        int p1_wins = 0;
+        int p2_wins = 0;
+
+        for (int x = 0; x < 100; ++x)
+        {
+            g.init();
+            turns.clear();
+            turns.reserve(40);
+
+            while (g.cur_result() == Game::Result::playing)
+            {
+                turns.emplace_back();
+                auto& turn = turns.back();
+                turn.input = g.encode();
+                if (g.player2_turn)
+                {
+                    turn.eval = m2.make_eval();
+                    m2.calc(*turn.eval, turn.input, false);
+                }
+                else
+                {
+                    turn.eval = m1.make_eval();
+                    m1.calc(*turn.eval, turn.input, false);
+                }
+
+                // choose action to take
+                turn.take_ai_action();
+
+                g.advance(turn.chosen_action);
+            }
+            if (g.cur_result() == Game::Result::p1_win)
+                ++p1_wins;
+            else if (g.cur_result() == Game::Result::p2_win)
+                ++p2_wins;
+        }
+        return {p1_wins, p2_wins};
+    }
+
+    Fl_Button m_button;
+    Fl_Browser m_browser;
+};
+
+Tournament_Group* s_tgroup;
+
 int main(int argc, char* argv[])
 {
     srand((unsigned int)time(NULL));
-    s_model = make_model().release();
+    s_workers.push_back(std::make_unique<Worker>());
+    s_workers.push_back(std::make_unique<Worker>());
+    s_workers.push_back(std::make_unique<Worker>());
+    s_workers[0]->replace_model(make_model(default_model_dims()));
+    s_workers[1]->replace_model(make_model(medium_model_dims()));
+    s_workers[2]->replace_model(make_model(small_model_dims()));
 
     auto win = std::make_unique<Fl_Double_Window>(490, 400, "MLCard");
     win->begin();
@@ -361,24 +506,35 @@ int main(int argc, char* argv[])
     menu_bar.add("&File/&Open", "^o", &open_cb);
     menu_bar.add("&File/&Save", "^s", &save_cb);
     s_mlgroup = new MLStats_Group(10, 40, win->w() - 20, win->h() - 50);
-    s_mlgroup->m_learn_rate.value(s_learn_rate);
+    s_mlgroup->m_learn_rate.value(s_workers[0]->m_learn_rate);
     s_mlgroup->m_learn_rate.callback([](Fl_Widget* w, void* data) {
         auto self = (Fl_Counter*)w;
-        s_learn_rate = self->value();
+        s_workers[0]->m_learn_rate = self->value();
     });
     s_mlgroup->m_error_graph.valss.resize(1);
     Fl::add_idle([](void* v) {
-        s_mlgroup->error_value(s_err[0]);
-        s_mlgroup->trials_value(s_trials.load());
+        s_mlgroup->error_value(s_workers[0]->m_err[0]);
+        s_mlgroup->trials_value(s_workers[0]->m_trials.load());
 
         s_mlgroup->m_error_graph.valss[0].clear();
-        std::copy(std::begin(s_err), std::end(s_err), std::back_inserter(s_mlgroup->m_error_graph.valss[0]));
+        std::copy(std::begin(s_workers[0]->m_err),
+                  std::end(s_workers[0]->m_err),
+                  std::back_inserter(s_mlgroup->m_error_graph.valss[0]));
         s_mlgroup->m_error_graph.damage(FL_DAMAGE_ALL);
         s_mlgroup->m_error_graph.redraw();
+
+        s_tgroup->on_idle();
     });
     win->end();
     win->resizable(new Fl_Box(10, 10, win->w() - 20, win->h() - 20));
     win->show(argc, argv);
+
+    auto winx = std::make_unique<Fl_Double_Window>(600, 700, "Crossplay");
+    winx->begin();
+    s_tgroup = new Tournament_Group(10, 10, winx->w() - 20, winx->h() - 20);
+    winx->end();
+    win->resizable(new Fl_Box(10, 10, win->w() - 20, win->h() - 20));
+    winx->show();
 
     auto win2 = std::make_unique<Fl_Double_Window>(600, 700, "MLCard Game");
     win2->begin();
@@ -401,9 +557,10 @@ int main(int argc, char* argv[])
     win3->resizable(new Fl_Box(10, 10, win3->w() - 20, win3->h() - 20));
     win3->show();
 
-    std::thread th(worker);
+    for (auto&& w : s_workers)
+        w->start();
     auto rc = Fl::run();
-    s_worker_exit = true;
-    th.join();
+    for (auto&& w : s_workers)
+        w->join();
     return rc;
 }

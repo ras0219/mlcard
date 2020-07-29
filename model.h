@@ -6,6 +6,7 @@
 struct Encoded;
 struct vec_slice;
 struct RJWriter;
+struct ModelDims;
 
 struct IEval
 {
@@ -33,5 +34,9 @@ struct IModel
     virtual void serialize(RJWriter& w) const = 0;
 };
 
-std::unique_ptr<IModel> make_model();
+const ModelDims& default_model_dims();
+const ModelDims& medium_model_dims();
+const ModelDims& small_model_dims();
+
+std::unique_ptr<IModel> make_model(const ModelDims& dims);
 std::unique_ptr<IModel> load_model(const std::string& s);

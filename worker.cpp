@@ -3,15 +3,6 @@
 #include "game.h"
 #include "model.h"
 
-std::mutex s_mutex;
-std::atomic<bool> s_worker_exit = false;
-std::atomic<double> s_err[200] = {0};
-std::atomic<double> s_learn_rate = 0.0005;
-bool s_updated = false;
-bool s_replace_model = false;
-std::atomic<int> s_trials = 0;
-struct IModel* s_model;
-
 static void play_game(Game& g, IModel& m, std::vector<Turn>& turns)
 {
     g.init();
@@ -52,14 +43,42 @@ static void replay_game(IModel& m, std::vector<Turn>& turns)
     }
 }
 
-void worker()
+void Worker::replace_model(std::unique_ptr<IModel> model)
+{
+    std::lock_guard<std::mutex> lk(m_mutex);
+    delete m_model;
+    m_model = model.release();
+    m_replace_model = true;
+}
+
+std::unique_ptr<IModel> Worker::clone_model()
+{
+    std::lock_guard<std::mutex> lk(m_mutex);
+    return m_model->clone();
+}
+
+void Worker::serialize_model(struct RJWriter& w)
+{
+    std::lock_guard<std::mutex> lk(m_mutex);
+    m_model->serialize(w);
+}
+
+void Worker::start() { m_th = std::thread(&Worker::work, this); }
+void Worker::join()
+{
+    m_worker_exit = true;
+    m_th.join();
+}
+
+void Worker::work()
 {
     int update_tick = 0;
     int i_err = 0;
     std::unique_ptr<IModel> m;
     {
-        std::lock_guard<std::mutex> lk(s_mutex);
-        m = s_model->clone();
+        std::lock_guard<std::mutex> lk(m_mutex);
+        m = m_model->clone();
+        m_replace_model = false;
     }
     Game g;
 
@@ -67,12 +86,12 @@ void worker()
 
     double total_error = 0.0;
 
-    while (!s_worker_exit)
+    while (!m_worker_exit)
     {
-        // double total_s_err = 0.0;
-        // for (double x : s_err)
-        //    total_s_err += x;
-        // if (total_error > (2 * total_s_err / std::size(s_err) + 1e-3))
+        // double total_m_err = 0.0;
+        // for (double x : m_err)
+        //    total_m_err += x;
+        // if (total_error > (2 * total_m_err / std::size(m_err) + 1e-3))
         //    replay_game(m, turns);
         // else
         play_game(g, *m, turns);
@@ -118,30 +137,29 @@ void worker()
             total_error += turn.error.slice().dot(turn.error);
         }
 
-        m->learn(s_learn_rate);
+        m->learn(m_learn_rate);
 
         //// now learn
 
-        s_err[i_err] = total_error;
-        i_err = (i_err + 1ULL) % std::size(s_err);
+        m_err[i_err] = total_error;
+        i_err = (i_err + 1ULL) % std::size(m_err);
 
         update_tick = (update_tick + 1) % 100;
         if (update_tick == 0)
         {
-            m->normalize(s_learn_rate);
-            std::lock_guard<std::mutex> lk(s_mutex);
-            if (s_replace_model)
+            m->normalize(m_learn_rate);
+            std::lock_guard<std::mutex> lk(m_mutex);
+            if (m_replace_model)
             {
-                m = s_model->clone();
-                s_replace_model = false;
+                m = m_model->clone();
+                m_replace_model = false;
             }
             else
             {
-                delete s_model;
-                s_model = m->clone().release();
-                s_updated = true;
+                delete m_model;
+                m_model = m->clone().release();
             }
         }
-        ++s_trials;
+        ++m_trials;
     }
 }

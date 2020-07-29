@@ -1,5 +1,6 @@
 #include "model.h"
 #include "game.h"
+#include "modeldims.h"
 #include "rjwriter.h"
 #include "vec.h"
 #include <algorithm>
@@ -241,7 +242,7 @@ struct ReLULayers
     int out_size() const { return ls.back().out_size(); }
     int inner_size() const { return m_inner_size; }
 
-    void randomize(int input, std::initializer_list<int> middle, int output)
+    void randomize(int input, const std::vector<int>& middle, int output)
     {
         m_inner_size = 0;
         for (auto sz : middle)
@@ -366,7 +367,10 @@ struct PerCardInputModel
         vec_slice out() { return l.out(); }
     };
 
-    void randomize(int input_size, int output_size) { l.randomize(input_size, {input_size, input_size}, output_size); }
+    void randomize(int input_size, const std::vector<int>& middle, int output_size)
+    {
+        l.randomize(input_size, middle, output_size);
+    }
 
     void calc(Eval& e, vec_slice input) { l.calc(e.l, input); }
     void backprop_init() { l.backprop_init(); }
@@ -386,7 +390,10 @@ struct PerYouCardInputModel
         vec_slice out() { return l1.out(); }
     };
 
-    void randomize(int input_size, int output_size) { l.randomize(input_size, {input_size, input_size}, output_size); }
+    void randomize(int input_size, const std::vector<int>& middle, int output_size)
+    {
+        l.randomize(input_size, middle, output_size);
+    }
 
     void calc(Eval& e, vec_slice input) { l.calc(e.l1, input); }
     void backprop_init() { l.backprop_init(); }
@@ -408,7 +415,7 @@ struct PerCardOutputModel
         vec_slice err() { return l.errs(); }
     };
 
-    void randomize(int input_size) { l.randomize(input_size, {input_size, input_size}, 1); }
+    void randomize(int input_size, const std::vector<int>& middle) { l.randomize(input_size, middle, 1); }
 
     void calc(Eval& e) { l.calc(e.l, e.input); }
     void backprop_init() { l.backprop_init(); }
@@ -429,15 +436,18 @@ struct Model final : IModel
     PerYouCardInputModel you_card_in_model;
     PerCardOutputModel card_out_model;
 
-    static constexpr int card_out_width = 10;
-    static constexpr int board_out_width = 20;
-    static constexpr int l3_out_width = 20;
+    int card_out_width = 0;
 
     struct LInput
     {
         vec data;
+        int board_out_width = 0;
 
-        void realloc_uninitialized() { data.realloc_uninitialized(board_out_width + card_out_width); }
+        void realloc_uninitialized(int w, int board_out_width)
+        {
+            data.realloc_uninitialized(w);
+            this->board_out_width = board_out_width;
+        }
 
         vec_slice all() { return data.slice(); }
         vec_slice board() { return data.slice(0, board_out_width); }
@@ -493,21 +503,35 @@ struct Model final : IModel
 
     virtual std::unique_ptr<IEval> make_eval() { return std::make_unique<Eval>(); }
 
-    void randomize(int board_size, int card_size)
+    void randomize(int board_size, int card_size, const ModelDims& dims)
     {
-        b.randomize(board_size, {board_size, board_out_width}, board_out_width);
-        l.randomize(board_out_width + card_out_width, {board_out_width + card_out_width, 28, 24, 22}, l3_out_width);
+        auto b_dims = dims.children.at("b").dims;
+        auto board_out_width = b_dims.back();
+        b_dims.pop_back();
+        b.randomize(board_size, b_dims, board_out_width);
+
+        auto card_in_dims = dims.children.at("card_in").dims;
+        card_out_width = card_in_dims.back();
+        card_in_dims.pop_back();
+        card_in_model.randomize(card_size, card_in_dims, card_out_width);
+
+        auto you_card_in_dims = dims.children.at("you_card_in").dims;
+        you_card_in_model.randomize(card_size, you_card_in_dims, card_out_width);
+
+        auto l_dims = dims.children.at("l").dims;
+        auto l3_out_width = l_dims.back();
+        l_dims.pop_back();
+        l.randomize(board_out_width + card_out_width, l_dims, l3_out_width);
+
         p.randomize(l3_out_width, 1);
-        card_in_model.randomize(card_size, card_out_width);
-        card_out_model.randomize(l3_out_width + card_out_width);
-        you_card_in_model.randomize(card_size, card_out_width);
+        card_out_model.randomize(l3_out_width + card_out_width, dims.children.at("card_out").dims);
     }
 
     virtual void calc(IEval& e, Encoded& g, bool full) override { calc_inner((Eval&)e, g, full); }
     void calc_inner(Eval& e, Encoded& g, bool full)
     {
         b.calc(e.b, g.board());
-        e.l_input.realloc_uninitialized();
+        e.l_input.realloc_uninitialized(b.out_size() + card_out_width, b.out_size());
         e.l_input.board().assign(e.b.out());
         auto l_input_cards = e.l_input.cards();
         l_input_cards.assign(0);
@@ -533,9 +557,9 @@ struct Model final : IModel
         p.calc(e.l.out(), e.all_out.slice(0, 1));
         for (int i = 0; i < g.me_cards; ++i)
         {
-            e.cards_out[i].input.realloc_uninitialized(l3_out_width + card_out_width);
-            e.cards_out[i].input.slice(l3_out_width).assign(e.cards_in[i].out());
-            e.cards_out[i].input.slice(0, l3_out_width).assign(e.l.out());
+            e.cards_out[i].input.realloc_uninitialized(l.out_size() + card_out_width);
+            e.cards_out[i].input.slice(l.out_size()).assign(e.cards_in[i].out());
+            e.cards_out[i].input.slice(0, l.out_size()).assign(e.l.out());
             card_out_model.calc(e.cards_out[i]);
             e.all_out[i + 1] = e.cards_out[i].out()[0];
         }
@@ -567,11 +591,11 @@ struct Model final : IModel
         for (int i = 0; i < cards_grad.size(); ++i)
         {
             card_out_model.backprop(e.cards_out[i], cards_grad.slice(i, 1));
-            e.l_grad.slice().add(e.cards_out[i].err().slice(0, l3_out_width));
+            e.l_grad.slice().add(e.cards_out[i].err().slice(0, l.out_size()));
         }
         l.backprop(e.l, e.l_input.all(), e.l_grad);
 
-        auto l_card_errs = e.l.errs().slice(board_out_width);
+        auto l_card_errs = e.l.errs().slice(b.out_size());
         if (full)
         {
             for (int i = 0; i < g.you_cards; ++i)
@@ -581,11 +605,11 @@ struct Model final : IModel
         }
         for (int i = 0; i < g.me_cards; ++i)
         {
-            e.cards_in[i].grad.realloc_uninitialized(card_out_width);
-            e.cards_in[i].grad.slice().assign_add(l_card_errs, e.cards_out[i].err().slice(l3_out_width));
+            e.cards_in[i].grad.realloc_uninitialized(e.cards_in[i].out().size());
+            e.cards_in[i].grad.slice().assign_add(l_card_errs, e.cards_out[i].err().slice(l.out_size()));
             card_in_model.backprop(e.cards_in[i], g.me_card(i));
         }
-        b.backprop(e.b, g.board(), e.l.errs().slice(0, board_out_width));
+        b.backprop(e.b, g.board(), e.l.errs().slice(0, b.out_size()));
     }
     void learn(double lr)
     {
@@ -642,10 +666,10 @@ struct Model final : IModel
     virtual std::unique_ptr<IModel> clone() const { return std::make_unique<Model>(*this); }
 };
 
-std::unique_ptr<IModel> make_model()
+std::unique_ptr<IModel> make_model(const ModelDims& dims)
 {
     auto m = std::make_unique<Model>();
-    m->randomize(Encoded::board_size, Encoded::card_size);
+    m->randomize(Encoded::board_size, Encoded::card_size, dims);
     return m;
 }
 
@@ -656,4 +680,43 @@ std::unique_ptr<IModel> load_model(const std::string& s)
     auto m = std::make_unique<Model>();
     m->deserialize(doc);
     return m;
+}
+
+const ModelDims& default_model_dims()
+{
+    static ModelDims md{{
+                            {"b", ModelDims{{}, {20, 20, 20}}},
+                            {"l", ModelDims{{}, {20, 20, 20}}},
+                            {"card_in", ModelDims{{}, {20, 20, 20}}},
+                            {"you_card_in", ModelDims{{}, {20, 20, 20}}},
+                            {"card_out", ModelDims{{}, {20, 20, 20}}},
+                        },
+                        {}};
+    return md;
+}
+
+const ModelDims& medium_model_dims()
+{
+    static ModelDims md{{
+                            {"b", ModelDims{{}, {10, 10}}},
+                            {"l", ModelDims{{}, {10, 10}}},
+                            {"card_in", ModelDims{{}, {10, 10}}},
+                            {"you_card_in", ModelDims{{}, {10, 10}}},
+                            {"card_out", ModelDims{{}, {10, 10}}},
+                        },
+                        {}};
+    return md;
+}
+
+const ModelDims& small_model_dims()
+{
+    static ModelDims md{{
+                            {"b", ModelDims{{}, {6}}},
+                            {"l", ModelDims{{}, {6}}},
+                            {"card_in", ModelDims{{}, {6}}},
+                            {"you_card_in", ModelDims{{}, {6}}},
+                            {"card_out", ModelDims{{}, {6}}},
+                        },
+                        {}};
+    return md;
 }
