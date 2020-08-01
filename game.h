@@ -15,6 +15,8 @@ enum class ArtifactType
     Count,
 };
 
+const char* artifact_name(ArtifactType t);
+
 struct Card
 {
     enum class Type
@@ -41,6 +43,8 @@ struct Card
 
     static constexpr size_t encoded_size = (size_t)Type::Count + (size_t)ArtifactType::Count;
 };
+
+const char* card_name(Card::Type t);
 
 struct Player
 {

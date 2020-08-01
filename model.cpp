@@ -116,14 +116,14 @@ struct Layer
 
         for (size_t i = 0; i < delta().rows(); ++i)
         {
-            delta().row(i).mult(1.0 / m_deltas);
-            g1s().row(i).decay_average(delta().row(i), 0.1);
-            g2s().row(i).decay_variance(delta().row(i), 0.001);
+            delta().row(i).mult(1.0f / m_deltas);
+            g1s().row(i).decay_average(delta().row(i), 0.1f);
+            g2s().row(i).decay_variance(delta().row(i), 0.001f);
 
             auto coef = coefs().row(i);
             for (size_t j = 0; j < coef.size(); ++j)
             {
-                coef[j] -= learn_rate * g1s().row(i)[j] / sqrt(g2s().row(i)[j] + 1e-8);
+                coef[j] -= learn_rate * g1s().row(i)[j] / sqrt(g2s().row(i)[j] + 1e-8f);
             }
         }
     }
@@ -151,9 +151,9 @@ struct Layer
         m_input = input + 1;
         m_output = output;
         m_min_io = std::min(input, output);
-        m_data.realloc(m_input * m_output * 4, 0.0);
+        m_data.realloc(m_input * m_output * 4, 0.0f);
         for (auto& v : coefs())
-            v = (rand() * 2.0 / RAND_MAX - 1) / m_input;
+            v = (rand() * 2.0f / RAND_MAX - 1) / m_input;
     }
 
     void deserialize(const Value& v)

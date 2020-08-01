@@ -25,7 +25,7 @@ void Card::encode(vec_slice x) const
     x.assign(0.0);
     if (type != Type::Artifact)
     {
-        x[(int)type] = value / 10.0;
+        x[(int)type] = value / 10.0f;
     }
     else
     {
@@ -36,11 +36,11 @@ void Card::encode(vec_slice x) const
 
 void Player::encode(vec_slice x) const
 {
-    x.assign(0.0);
-    x[0] = health / 10.0;
-    x[1] = mana / 10.0;
-    x[2] = creature / 10.0;
-    x[3] = avail.size() / 10.0;
+    x.assign(0.0f);
+    x[0] = health / 10.0f;
+    x[1] = mana / 10.0f;
+    x[2] = creature / 10.0f;
+    x[3] = avail.size() / 10.0f;
     if (artifact != ArtifactType::Count)
     {
         x.slice(4)[(int)artifact] = 1;
@@ -67,7 +67,7 @@ Encoded Game::encode() const
 {
     Encoded e;
     e.data.realloc_uninitialized(Encoded::board_size + Encoded::card_size * (p1.cards() + p2.cards()));
-    e.data[0] = turn / 30.0;
+    e.data[0] = turn / 30.0f;
     e.data[1] = player2_turn;
 
     auto [me, x2] = e.data.slice(2).split(Player::encoded_size);
@@ -244,6 +244,19 @@ const char* artifact_name(ArtifactType t)
         case ArtifactType::HealCauseDamage: return "Heals cause Damage";
         case ArtifactType::LandCauseDamage: return "Lands cause Damage";
         case ArtifactType::DoubleMana: return "Double Mana";
+        default: std::terminate();
+    }
+}
+const char* card_name(Card::Type t)
+{
+    switch (t)
+    {
+        case Card::Type::Creature: return "Creature";
+        case Card::Type::Direct: return "Direct";
+        case Card::Type::Heal: return "Heal";
+        case Card::Type::Land: return "Land";
+        case Card::Type::Draw3: return "Draw3";
+        case Card::Type::Artifact: return "Artifact";
         default: std::terminate();
     }
 }
