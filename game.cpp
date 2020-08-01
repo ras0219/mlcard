@@ -197,6 +197,10 @@ void Game::advance(int action)
         else
         {
             me.mana++;
+            if (you.artifact != ArtifactType::DirectImmune && me.artifact == ArtifactType::LandCauseDamage)
+            {
+                you.health -= me.mana;
+            }
         }
 
         // Discard
