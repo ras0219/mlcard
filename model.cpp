@@ -653,6 +653,8 @@ struct Model final : IModel
         you_card_in_model.serialize(w);
         w.Key("out");
         card_out_model.serialize(w);
+        w.Key("card_out_width");
+        w.Int(card_out_width);
         w.EndObject();
     }
 
@@ -665,6 +667,7 @@ struct Model final : IModel
         card_in_model.deserialize(find_or_throw(doc, "in"));
         you_card_in_model.deserialize(find_or_throw(doc, "you_in"));
         card_out_model.deserialize(find_or_throw(doc, "out"));
+        card_out_width = find_or_throw(doc, "card_out_width").GetInt();
     }
 
     virtual std::unique_ptr<IModel> clone() const { return std::make_unique<Model>(*this); }
