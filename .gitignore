@@ -1,4 +1,6 @@
 .vs/
-vcpkg_installed/
+.vscode/
 out/
+build/
+vcpkg_installed/
 CMakeSettings.json

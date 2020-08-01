@@ -85,8 +85,15 @@ void Worker::join()
     m_th.join();
 }
 
+extern "C"
+{
+    __declspec(dllimport) void __stdcall SetThreadPriority(void*, int);
+    __declspec(dllimport) void* __stdcall GetCurrentThread();
+}
+
 void Worker::work()
 {
+    SetThreadPriority(GetCurrentThread(), /*THREAD_MODE_BACKGROUND_BEGIN*/ 0x00010000);
     int update_tick = 0;
     int learn_tick = 0;
     int i_err = 0;
