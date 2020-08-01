@@ -252,6 +252,7 @@ struct Game_Group : Fl_Group
         turns.emplace_back();
         auto& turn = turns.back();
         turn.input = g.encode();
+        turn.player2_turn = g.player2_turn;
         turn.eval = cur_model->make_eval();
         turn.eval_full = cur_model->make_eval();
         cur_model->calc(*turn.eval, turn.input, false);
@@ -301,8 +302,8 @@ struct Game_Group : Fl_Group
         if (turns.empty()) return;
         while (g.cur_result() == Game::Result::playing)
         {
-            if (turns.size() % 2 == 1 && !m_ai_plays_p1.value()) break;
-            if (turns.size() % 2 == 0 && !m_ai_plays_p2.value()) break;
+            if (!turns.back().player2_turn && !m_ai_plays_p1.value()) break;
+            if (turns.back().player2_turn && !m_ai_plays_p2.value()) break;
 
             auto& turn = turns.back();
 
@@ -1136,13 +1137,13 @@ struct Tournament_Group : Fl_Group
         m_worker.updated = false;
         sync_ui_models();
         m_browser.clear();
-        static int widths[] = {150, 100, 0};
+        static int widths[] = {200, 100, 0};
         m_browser.column_widths(widths);
         m_browser.column_char('\t');
         m_browser.add("Tournament Results:");
         for (auto&& wr : winrates(m_worker.data))
         {
-            m_browser.add(fmt::format("{} overall:\t{}%", model_names[wr.second], wr.first).c_str());
+            m_browser.add(fmt::format("{} overall:\t{:.2f}%", model_names[wr.second], wr.first).c_str());
         }
         m_browser.add("");
 
@@ -1152,7 +1153,7 @@ struct Tournament_Group : Fl_Group
             {
                 const auto& d = m_worker.data[i][j];
                 if (d.p1 + d.p2 > 0)
-                    m_browser.add(fmt::format("{} vs {}:\t{} vs {}:\t{}%",
+                    m_browser.add(fmt::format("{} vs {}:\t{} vs {}:\t{:.2f}%",
                                               model_names[i],
                                               model_names[j],
                                               d.p1,
