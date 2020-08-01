@@ -4,6 +4,7 @@
 #include "ai_play.h"
 #include "game.h"
 #include "model.h"
+#include "modeldims.h"
 #include "rjwriter.h"
 #include "vec.h"
 #include "worker.h"
@@ -886,6 +887,7 @@ struct Tournament_Group : Fl_Group
         auto num_models = stats.size();
         for (int i = 0; i < num_models; ++i)
         {
+            int winpct_count = 0;
             double winpct = 0;
             for (int j = 0; j < num_models; ++j)
             {
@@ -893,12 +895,14 @@ struct Tournament_Group : Fl_Group
                 const auto& d = stats[i][j];
                 if (d.p1 + d.p2 == 0) continue;
                 winpct += 100.0 * d.p1 / (d.p1 + d.p2);
+                winpct_count++;
 
                 const auto& d2 = stats[j][i];
                 if (d2.p1 + d2.p2 == 0) continue;
                 winpct += 100.0 * d2.p2 / (d2.p1 + d2.p2);
+                winpct_count++;
             }
-            ret.emplace_back(winpct / 2 / (num_models - 1), i);
+            ret.emplace_back(winpct / std::max(winpct_count, 1), i);
         }
         return ret;
     }
@@ -1176,9 +1180,15 @@ int main(int argc, char* argv[])
     s_workers.push_back(std::make_unique<Worker>());
     s_workers.push_back(std::make_unique<Worker>());
     s_workers[0]->replace_model(make_model(default_model_dims(), "bgA"));
+    auto bgB = default_model_dims();
+    bgB.children["b"].dims = {40, 40, 40};
     s_workers[1]->replace_model(make_model(default_model_dims(), "bgB"));
     s_workers[2]->replace_model(make_model(medium_model_dims(), "llA"));
-    s_workers[3]->replace_model(make_model(medium_model_dims(), "llB"));
+    auto llB = default_model_dims();
+    llB.children["card_in"].dims = {30, 30, 30};
+    llB.children["you_card_in"].dims = {30, 30, 30};
+    llB.children["card_out"].dims = {50, 20};
+    s_workers[3]->replace_model(make_model(llB, "llB"));
 
     auto win = std::make_unique<Fl_Double_Window>(490, 400, "MLCard");
     win->begin();

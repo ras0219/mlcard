@@ -112,11 +112,11 @@ void Worker::work()
 
     float total_error = 0.0f;
 
+    m->backprop_init();
+
     while (!m_worker_exit)
     {
         turn_count = play_game(g, *m, turns);
-
-        m->backprop_init();
 
         // First, fill in the error values
         auto& turn = turns[turn_count - 1];
@@ -168,7 +168,11 @@ void Worker::work()
 
         learn_tick++;
         if (learn_tick >= 10000) learn_tick = 0;
-        if (learn_tick % 10 == 9) m->learn(m_learn_rate);
+        if (learn_tick % 10 == 9)
+        {
+            m->learn(m_learn_rate);
+            m->backprop_init();
+        }
         if (learn_tick % 10000 == 9999) m->normalize(m_learn_rate * 1e-9f);
 
         update_tick++;
