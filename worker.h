@@ -9,8 +9,8 @@
 struct Worker
 {
     std::atomic<int> m_trials = 0;
-    std::atomic<double> m_err[200] = {};
-    std::atomic<double> m_learn_rate = 0.0002;
+    std::atomic<float> m_err[200] = {};
+    std::atomic<float> m_learn_rate = 0.0002;
 
     void replace_model(std::unique_ptr<struct IModel> model);
     std::unique_ptr<struct IModel> clone_model();

@@ -109,7 +109,7 @@ void Worker::work()
     std::vector<Turn> turns;
     turns.resize(40);
 
-    double total_error = 0.0;
+    float total_error = 0.0f;
 
     while (!m_worker_exit)
     {
@@ -132,20 +132,20 @@ void Worker::work()
         auto& turn = turns[turn_count - 1];
         // full model
         auto predicted = turn.eval_full->pct_for_action(turn.chosen_action);
-        auto error = predicted - static_cast<double>(last_player_won);
-        turn.error_full.realloc(turn.input.avail_actions(), 0.0);
+        auto error = predicted - static_cast<float>(last_player_won);
+        turn.error_full.realloc(turn.input.avail_actions(), 0.0f);
         turn.error_full[turn.chosen_action] = error * 10;
 
         m->backprop(*turn.eval_full, turn.input, turn.error_full, true);
         total_error += error * error;
 
-        double next_turn_expected = static_cast<double>(last_player_won);
+        auto next_turn_expected = static_cast<float>(last_player_won);
         for (int i = (int)turn_count - 2; i >= 0; --i)
         {
             auto& turn = turns[i];
             auto& next_turn = turns[i + 1];
             auto predicted = turn.eval_full->pct_for_action(turn.chosen_action);
-            auto expected = (1.0 - next_turn.eval_full->clamped_best_pct(next_turn.chosen_action, next_turn_expected));
+            auto expected = (1.0f - next_turn.eval_full->clamped_best_pct(next_turn.chosen_action, next_turn_expected));
             auto error = predicted - expected;
             turn.error_full.realloc(turn.input.avail_actions(), 0.0);
             turn.error_full[turn.chosen_action] = error * 10;
@@ -154,7 +154,7 @@ void Worker::work()
             next_turn_expected = expected;
         }
 
-        for (int i = 0; i < turn_count; i++)
+        for (unsigned i = 0; i < turn_count; i++)
         {
             auto&& turn = turns[i];
             turn.error.realloc_uninitialized(turn.input.avail_actions());
