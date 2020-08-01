@@ -201,7 +201,7 @@ struct ReLULayer
         n.calc(inner, out);
     }
     void backprop_init() { l.backprop_init(); }
-    void backprop(vec_slice errs, vec_slice in, vec_slice inner, vec_slice out, vec_slice grad)
+    void backprop(vec_slice errs, vec_slice in, vec_slice inner, vec_slice grad)
     {
         VEC_STACK_VEC(tmp, l.out_size());
 
@@ -283,8 +283,8 @@ struct ReLULayers
         ls.back().calc(in, inner, out);
     }
 
-    void backprop(Eval& e, vec_slice in, vec_slice grad) { this->backprop(e.errs(), in, e.inner(), e.out(), grad); }
-    void backprop(vec_slice errs, vec_slice in, vec_slice inner, vec_slice out, vec_slice grad)
+    void backprop(Eval& e, vec_slice in, vec_slice grad) { this->backprop(e.errs(), in, e.inner(), grad); }
+    void backprop(vec_slice errs, vec_slice in, vec_slice inner, vec_slice grad)
     {
         if (ls.size() == 0)
         {
@@ -292,7 +292,7 @@ struct ReLULayers
         }
         else if (ls.size() == 1)
         {
-            ls[0].backprop(errs, in, inner, out, grad);
+            ls[0].backprop(errs, in, inner, grad);
             return;
         }
         else
@@ -308,13 +308,12 @@ struct ReLULayers
                 auto [x, cur_inner] = inner.rsplit(ls[i].inner_size());
                 auto [new_inner, cur_in] = x.rsplit(ls[i].in_size());
                 auto [new_tmp, cur_errs] = tmp.rsplit(ls[i].in_size());
-                ls[i].backprop(cur_errs, cur_in, cur_inner, out, grad);
+                ls[i].backprop(cur_errs, cur_in, cur_inner, grad);
                 grad = cur_errs;
                 inner = new_inner;
-                out = cur_in;
                 tmp = new_tmp;
             }
-            ls[0].backprop(errs, in, inner, out, grad);
+            ls[0].backprop(errs, in, inner, grad);
         }
     }
     void learn(float learn_rate)
