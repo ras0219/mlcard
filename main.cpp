@@ -1096,7 +1096,6 @@ int main(int argc, char* argv[])
     s_workers[1]->replace_model(make_model(default_model_dims(), "bgB"));
     s_workers[2]->replace_model(make_model(medium_model_dims(), "llA"));
     s_workers[3]->replace_model(make_model(medium_model_dims(), "llB"));
-    s_workers[4]->replace_model(make_model(small_model_dims(), "sml"));
 
     auto win = std::make_unique<Fl_Double_Window>(490, 400, "MLCard");
     win->begin();
