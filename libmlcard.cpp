@@ -93,10 +93,12 @@ API const char* serialize_game(APIGame* g)
 
 API void take_action(APIGame* g, int action) { g->g.advance(action); }
 
-API void ai_take_action(APIGame* g, APIModel* m)
+API int ai_take_action(APIGame* g, APIModel* m)
 {
     auto e = m->m->make_eval();
     auto enc = g->g.encode();
     m->m->calc(*e, enc, false);
-    g->g.advance(e->best_action());
+    auto a = e->best_action();
+    g->g.advance(a);
+    return a;
 }
