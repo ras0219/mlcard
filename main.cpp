@@ -129,12 +129,12 @@ struct MLStats_Group : Fl_Group
         auto label = fmt::format("{}", i);
         m_trials.value(label.c_str());
     }
-    void trialsPerSec_value(float f)
+    void trialsPerSec_value(double f)
     {
         auto label = fmt::format("{:+.1f}", f);
         m_trialsPerSec.value(label.c_str());
     }
-    void FPS_value(float f)
+    void FPS_value(double f)
     {
         auto label = fmt::format("{:+.1f}", f);
         m_FPS.value(label.c_str());
@@ -143,19 +143,19 @@ struct MLStats_Group : Fl_Group
     void on_idle()
     {
         static constexpr double FPS = 60.0;
-        static constexpr long long NS_PER_MS = 1e6;
-        static constexpr long long MS_PER_S = 1e3;
-        static constexpr long long NS_PER_S = 1e9;
-        static constexpr long long NS_PER_FRAME = NS_PER_S / FPS;
+        static constexpr long long NS_PER_MS = (long long)1e6;
+        static constexpr long long MS_PER_S = (long long)1e3;
+        static constexpr long long NS_PER_S = (long long)1e9;
+        static constexpr long long NS_PER_FRAME = (long long)(NS_PER_S / FPS);
 
         static long prevDelta = 0;
         static long long prevTimer = get_nanos();
-        static float smoothed_tps = 0.0;
+        static double smoothed_tps = 0.0;
         static double smoothed_fps = 60.0;
 
         long long timer = get_nanos();
-        long delta = timer - prevTimer + prevDelta;
-        long true_delta = timer - prevTimer;
+        long true_delta = (long)(timer - prevTimer);
+        long delta = (long)(true_delta + prevDelta);
 
         if (delta >= NS_PER_FRAME)
         {
@@ -837,78 +837,25 @@ struct Manager_Window : Fl_Double_Window
 
 struct Tournament_Group : Fl_Group
 {
+    struct WinStats
+    {
+        int p1;
+        int p2;
+        int tie;
+    };
+
     Tournament_Group(int x, int y, int w, int h, const char* label = 0)
         : Fl_Group(x, y, w, h, label)
-        , m_button(x, y, w, 20, "Run tournament")
-        , m_browser(x, y + 30, w, h - 10 - 30 - 17, "AI comparison")
+        , m_button(x, y, w, 20, "Pause/Unpause Tournament")
+        , m_browser(x, y + 30, w, h - 10 - 30 - 17, "AI Comparison")
     {
         m_button.callback([](Fl_Widget* w, void*) { ((Tournament_Group*)w->parent())->run_tournament(); });
         this->resizable(&m_browser);
         this->end();
     }
-    ~Tournament_Group()
-    {
-        exit_worker = true;
-        if (th.joinable()) th.join();
-    }
+    ~Tournament_Group() { m_worker.exit(); }
 
-    void run_tournament()
-    {
-        std::lock_guard<std::mutex> lk(m);
-        updated = false;
-        restart = true;
-        static const size_t target_tournament = 10; // must be larger than s_workers.size()
-        auto new_size = std::min(target_tournament, s_workers.size() + models.size());
-
-        int active = s_gamegroup->m_ai_choice.value();
-        auto active_p = active < 0 || active >= models.size() ? nullptr : models[active].get();
-        if (target_tournament < s_workers.size() + models.size())
-        {
-            auto wrs = winrates(data);
-            std::sort(wrs.begin(), wrs.end());
-            auto num_to_erase = s_workers.size() + models.size() - target_tournament;
-            std::vector<bool> to_erase(models.size(), false);
-            for (int i = 0; i < num_to_erase; ++i)
-                to_erase[wrs[i].second] = true;
-            erase_ns(data, to_erase);
-            erase_ns(models, to_erase);
-            for (auto&& x : data)
-                erase_ns(x, to_erase);
-        }
-
-        for (auto&& x : data)
-            x.resize(new_size);
-        for (size_t i = data.size(); i < new_size; ++i)
-            data.emplace_back(new_size);
-        for (auto&& w : s_workers)
-            models.push_back(w->clone_model());
-
-        num_models = models.size();
-        model_names.resize(models.size());
-        for (int i = 0; i < models.size(); ++i)
-        {
-            model_names[i] = models[i]->name();
-        }
-
-        s_gamegroup->m_ai_choice.clear();
-        for (auto&& n : model_names)
-            s_gamegroup->m_ai_choice.add(n.c_str());
-        for (int i = 0; i < models.size(); ++i)
-        {
-            if (models[i].get() == active_p)
-            {
-                s_gamegroup->m_ai_choice.value(i);
-                break;
-            }
-        }
-        s_gamegroup->m_ai_choice.damage(FL_DAMAGE_ALL);
-        s_gamegroup->m_ai_choice.redraw();
-
-        if (!th.joinable())
-        {
-            th = std::thread(&Tournament_Group::work, this);
-        }
-    }
+    void run_tournament() { m_worker.toggle_pause(); }
 
     template<class T>
     static void erase_ns(std::vector<T>& v, const std::vector<bool>& to_erase)
@@ -929,7 +876,7 @@ struct Tournament_Group : Fl_Group
         v.erase(v.begin() + i, v.end());
     }
 
-    static std::vector<std::pair<double, int>> winrates(const std::vector<std::vector<std::pair<int, int>>>& stats)
+    static std::vector<std::pair<double, int>> winrates(const std::vector<std::vector<WinStats>>& stats)
     {
         std::vector<std::pair<double, int>> ret;
         auto num_models = stats.size();
@@ -940,95 +887,269 @@ struct Tournament_Group : Fl_Group
             {
                 if (j == i) continue;
                 const auto& d = stats[i][j];
-                if (d.first + d.second == 0) continue;
-                winpct += 100.0 * d.first / (d.first + d.second);
+                if (d.p1 + d.p2 == 0) continue;
+                winpct += 100.0 * d.p1 / (d.p1 + d.p2);
 
                 const auto& d2 = stats[j][i];
-                if (d2.first + d2.second == 0) continue;
-                winpct += 100.0 * d2.second / (d2.first + d2.second);
+                if (d2.p1 + d2.p2 == 0) continue;
+                winpct += 100.0 * d2.p2 / (d2.p1 + d2.p2);
             }
             ret.emplace_back(winpct / 2 / (num_models - 1), i);
         }
         return ret;
     }
 
-    void work()
+    struct Worker
     {
-        std::vector<std::vector<std::pair<int, int>>> local_data;
-        std::vector<std::shared_ptr<IModel>> local_models;
-        int i = 0;
-        int j = 0;
-        while (!exit_worker)
+        void exit()
         {
-            if (restart || !updated)
+            if (th.joinable())
             {
-                std::lock_guard<std::mutex> lk(m);
-                if (restart)
-                {
-                    local_data = data;
-                    local_models = models;
-                    restart = false;
-                }
-                else if (!updated)
-                {
-                    data = local_data;
-                    updated = true;
-                }
+                exit_worker = true;
+                unpause();
+                th.join();
             }
-            i++;
-            if (i >= local_data.size())
-            {
-                i = 0;
-                j++;
-            }
-            if (j >= local_data.size())
-            {
-                j = 0;
-            }
-            auto [x, y] = run_100(*local_models[i], *local_models[j]);
-            local_data[i][j].first += x;
-            local_data[i][j].second += y;
         }
-    }
+        void pause() { paused = true; }
+        void unpause()
+        {
+            paused = false;
+            if (!th.joinable())
+            {
+                th = std::thread(&Worker::work, this);
+            }
+            else
+            {
+                std::lock_guard lk(m);
+                m_cv.notify_all();
+            }
+        }
+        void toggle_pause()
+        {
+            if (paused || !th.joinable())
+                unpause();
+            else
+                pause();
+        }
 
-    std::atomic<bool> updated = false;
-    std::atomic<bool> restart = false;
-    std::atomic<bool> exit_worker = false;
+        void work()
+        {
+            std::vector<std::vector<WinStats>> local_data;
+            std::vector<std::shared_ptr<IModel>> local_models;
+            int i = 0;
+            int j = 0;
+            while (!exit_worker)
+            {
+                if (restart || !updated || paused)
+                {
+                    std::unique_lock lk(m);
+                    m_cv.wait(lk, [this]() { return !paused; });
+                    if (restart)
+                    {
+                        local_data = data;
+                        local_models = models;
+                        restart = false;
+                    }
+                    else if (!updated)
+                    {
+                        data = local_data;
+                        models = local_models;
+                        updated = true;
+                    }
+                }
+
+                bool ran_any = [&]() {
+                    if (local_data.size() == 0) return false;
+
+                    auto try_run = [&](int i, int j) {
+                        static constexpr auto max_samples = 250;
+                        auto& ld = local_data[i][j];
+                        if (ld.p1 + ld.p2 + ld.tie < max_samples)
+                        {
+                            auto [x, y] = run_100(*local_models[i], *local_models[j]);
+                            ld.p1 += x;
+                            ld.p2 += y;
+                            ld.tie += 100 - x - y;
+                            return true;
+                        }
+                        return false;
+                    };
+
+                    int init_i = i % local_data.size(), init_j = j % local_data.size();
+
+                    for (++i; i < local_data.size(); ++i)
+                    {
+                        if (try_run(i, j)) return true;
+                    }
+
+                    for (++j; j < local_data.size(); ++j)
+                    {
+                        for (i = 0; i < local_data.size(); ++i)
+                        {
+                            if (try_run(i, j)) return true;
+                        }
+                    }
+
+                    for (j = 0; j < init_j; ++j)
+                    {
+                        for (i = 0; i < local_data.size(); ++i)
+                        {
+                            if (try_run(i, j)) return true;
+                        }
+                    }
+
+                    for (i = 0; i <= init_i; ++i)
+                    {
+                        if (try_run(i, j)) return true;
+                    }
+
+                    return false;
+                }();
+
+                if (!ran_any)
+                {
+                    // All competitions have sufficient samples. Update models.
+                    static const size_t target_tournament = 12; // must be larger than s_workers.size()
+                    auto new_size = std::min(target_tournament, s_workers.size() + local_models.size());
+
+                    if (target_tournament < s_workers.size() + local_models.size())
+                    {
+                        auto wrs = winrates(local_data);
+                        std::sort(wrs.begin(), wrs.end());
+                        auto num_to_erase = s_workers.size() + local_models.size() - target_tournament;
+                        std::vector<bool> to_erase(local_models.size(), false);
+                        for (int i = 0; i < num_to_erase; ++i)
+                            to_erase[wrs[i].second] = true;
+                        erase_ns(local_data, to_erase);
+                        erase_ns(local_models, to_erase);
+                        for (auto&& x : local_data)
+                            erase_ns(x, to_erase);
+                    }
+
+                    for (auto&& x : local_data)
+                        x.resize(new_size);
+                    for (size_t i = local_data.size(); i < new_size; ++i)
+                        local_data.emplace_back(new_size);
+                    for (auto&& w : s_workers)
+                        local_models.push_back(w->clone_model());
+                }
+            }
+        }
+
+        std::pair<int, int> run_100(IModel& m1, IModel& m2)
+        {
+            Game g;
+            std::vector<Turn> turns;
+            int p1_wins = 0;
+            int p2_wins = 0;
+
+            for (int x = 0; x < 100; ++x)
+            {
+                g.init();
+                turns.clear();
+                turns.reserve(40);
+
+                while (g.cur_result() == Game::Result::playing)
+                {
+                    turns.emplace_back();
+                    auto& turn = turns.back();
+                    turn.input = g.encode();
+                    if (g.player2_turn)
+                    {
+                        turn.eval = m2.make_eval();
+                        m2.calc(*turn.eval, turn.input, false);
+                    }
+                    else
+                    {
+                        turn.eval = m1.make_eval();
+                        m1.calc(*turn.eval, turn.input, false);
+                    }
+
+                    // choose action to take
+                    turn.take_ai_action();
+
+                    g.advance(turn.chosen_action);
+                }
+                if (g.cur_result() == Game::Result::p1_win)
+                    ++p1_wins;
+                else if (g.cur_result() == Game::Result::p2_win)
+                    ++p2_wins;
+            }
+            return {p1_wins, p2_wins};
+        }
+
+        std::atomic<bool> updated = false;
+        std::atomic<bool> restart = false;
+        std::atomic<bool> exit_worker = false;
+        std::mutex m;
+        std::condition_variable m_cv;
+        std::atomic<bool> paused = false;
+        std::vector<std::vector<WinStats>> data;
+        std::vector<std::shared_ptr<IModel>> models;
+        std::thread th;
+    } m_worker;
+
+    std::vector<std::shared_ptr<IModel>> ui_models;
     std::vector<std::string> model_names;
-    std::mutex m;
-    std::vector<std::vector<std::pair<int, int>>> data;
-    size_t num_models = 0;
-    std::vector<std::shared_ptr<IModel>> models;
-    std::thread th;
+
+    void sync_ui_models()
+    {
+        if (ui_models == m_worker.models) return;
+
+        int active = s_gamegroup->m_ai_choice.value();
+        auto active_p = active < 0 || active >= ui_models.size() ? nullptr : ui_models[active].get();
+
+        ui_models = m_worker.models;
+        model_names.resize(ui_models.size());
+        for (int i = 0; i < ui_models.size(); ++i)
+        {
+            model_names[i] = ui_models[i]->name();
+        }
+
+        s_gamegroup->m_ai_choice.clear();
+        for (auto&& n : model_names)
+            s_gamegroup->m_ai_choice.add(n.c_str());
+        for (int i = 0; i < ui_models.size(); ++i)
+        {
+            if (ui_models[i].get() == active_p)
+            {
+                s_gamegroup->m_ai_choice.value(i);
+                break;
+            }
+        }
+        s_gamegroup->m_ai_choice.damage(FL_DAMAGE_ALL);
+        s_gamegroup->m_ai_choice.redraw();
+    }
 
     void on_idle()
     {
-        if (!updated) return;
-        std::lock_guard<std::mutex> lk(m);
-        updated = false;
+        if (!m_worker.updated) return;
+        std::lock_guard<std::mutex> lk(m_worker.m);
+        m_worker.updated = false;
+        sync_ui_models();
         m_browser.clear();
         static int widths[] = {150, 100, 0};
         m_browser.column_widths(widths);
         m_browser.column_char('\t');
         m_browser.add("Tournament Results:");
-        for (auto&& wr : winrates(data))
+        for (auto&& wr : winrates(m_worker.data))
         {
             m_browser.add(fmt::format("{} overall:\t{}%", model_names[wr.second], wr.first).c_str());
         }
         m_browser.add("");
 
-        for (int i = 0; i < num_models; ++i)
+        for (int i = 0; i < model_names.size(); ++i)
         {
-            for (int j = 0; j < num_models; ++j)
+            for (int j = 0; j < model_names.size(); ++j)
             {
-                const auto& d = data[i][j];
-                if (d.first + d.second > 0)
+                const auto& d = m_worker.data[i][j];
+                if (d.p1 + d.p2 > 0)
                     m_browser.add(fmt::format("{} vs {}:\t{} vs {}:\t{}%",
                                               model_names[i],
                                               model_names[j],
-                                              d.first,
-                                              d.second,
-                                              100.0 * d.first / (d.first + d.second))
+                                              d.p1,
+                                              d.p2,
+                                              100.0 * d.p1 / (d.p1 + d.p2))
                                       .c_str());
             }
         }
@@ -1037,53 +1158,11 @@ struct Tournament_Group : Fl_Group
         m_browser.redraw();
     }
 
-    std::pair<int, int> run_100(IModel& m1, IModel& m2)
-    {
-        Game g;
-        std::vector<Turn> turns;
-        int p1_wins = 0;
-        int p2_wins = 0;
-
-        for (int x = 0; x < 100; ++x)
-        {
-            g.init();
-            turns.clear();
-            turns.reserve(40);
-
-            while (g.cur_result() == Game::Result::playing)
-            {
-                turns.emplace_back();
-                auto& turn = turns.back();
-                turn.input = g.encode();
-                if (g.player2_turn)
-                {
-                    turn.eval = m2.make_eval();
-                    m2.calc(*turn.eval, turn.input, false);
-                }
-                else
-                {
-                    turn.eval = m1.make_eval();
-                    m1.calc(*turn.eval, turn.input, false);
-                }
-
-                // choose action to take
-                turn.take_ai_action();
-
-                g.advance(turn.chosen_action);
-            }
-            if (g.cur_result() == Game::Result::p1_win)
-                ++p1_wins;
-            else if (g.cur_result() == Game::Result::p2_win)
-                ++p2_wins;
-        }
-        return {p1_wins, p2_wins};
-    }
-
     Fl_Button m_button;
     Fl_Browser m_browser;
 };
 
-const std::vector<std::shared_ptr<IModel>>& s_tgroup_models() { return s_tgroup->models; }
+const std::vector<std::shared_ptr<IModel>>& s_tgroup_models() { return s_tgroup->ui_models; }
 
 int main(int argc, char* argv[])
 {
