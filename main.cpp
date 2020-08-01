@@ -20,6 +20,7 @@
 #include <FL/Fl_Menu_Bar.H>
 #include <FL/Fl_Multi_Browser.H>
 #include <FL/Fl_Output.H>
+#include <FL/Fl_Return_Button.H>
 #include <FL/Fl_Select_Browser.H>
 #include <FL/Fl_Valuator.H>
 #include <FL/Fl_Widget.H>
@@ -531,6 +532,43 @@ private:
 
 LockGuarded<std::vector<std::shared_ptr<IModel>>> s_tourny_list;
 
+struct Rename_Modal_Window : Fl_Window
+{
+    void cb_Ok()
+    {
+        this->hide();
+        if (m_ok_cb) m_ok_cb(this, m_ok_u);
+    }
+    void cb_Cancel() { this->hide(); }
+
+    const char* value() { return m_new_name.value(); }
+    void value(const char* v) { m_new_name.value(v); }
+    void on_submit(Fl_Callback* cb, void* u)
+    {
+        m_ok_cb = cb;
+        m_ok_u = u;
+    }
+
+    Rename_Modal_Window(const char* label = 0)
+        : Fl_Window(314, 88, label)
+        , m_ok(111, 47, 99, 30, "Ok")
+        , m_cancel(220, 47, 86, 30, "Cancel")
+        , m_new_name(98, 7, 208, 30, "New Name")
+    {
+        m_ok.callback(thunkv<Rename_Modal_Window, &Rename_Modal_Window::cb_Ok>, this);
+        m_cancel.callback(thunkv<Rename_Modal_Window, &Rename_Modal_Window::cb_Cancel>, this);
+
+        this->set_modal();
+        this->end();
+    }
+
+    Fl_Return_Button m_ok;
+    Fl_Button m_cancel;
+    Fl_Input m_new_name;
+    Fl_Callback* m_ok_cb = nullptr;
+    void* m_ok_u = nullptr;
+};
+
 struct Manager_Window : Fl_Double_Window
 {
     struct Workers_Browser : Fl_Group
@@ -616,7 +654,51 @@ struct Manager_Window : Fl_Double_Window
     void cb_New() { }
     void cb_Open() { }
     void cb_Save() { }
-    void cb_Rename() { }
+    void cb_Rename()
+    {
+        if (m_modal_rename.visible())
+        {
+            m_modal_rename.activate();
+            return;
+        }
+        else
+        {
+            auto& b = m_models.child();
+            int b_line = b.value();
+            if (b_line == 0) return;
+
+            {
+                std::lock_guard<std::mutex> lk(s_models_list.m);
+                if (b.size() != s_models_list.models.size()) return;
+                m_renaming = s_models_list.models[b_line - 1];
+            }
+            m_modal_rename.value(m_renaming->root_name().c_str());
+            m_modal_rename.show();
+        }
+    }
+    void cb_Rename_Ok()
+    {
+        std::lock_guard<std::mutex> lk(s_models_list.m);
+        auto new_model = m_renaming->clone();
+        new_model->set_root_name(m_modal_rename.value());
+        auto& s_models = s_models_list.models;
+        auto it = std::find(s_models.begin(), s_models.end(), m_renaming);
+        if (it == s_models.end())
+        {
+            m_models.m.add(new_model->name().c_str());
+            m_models.m.damage(FL_DAMAGE_ALL);
+            m_models.m.redraw();
+            s_models.push_back(std::move(new_model));
+        }
+        else
+        {
+            m_models.m.text((int)(it - s_models.begin() + 1), new_model->name().c_str());
+            m_models.m.damage(FL_DAMAGE_ALL);
+            m_models.m.redraw();
+            *it = std::move(new_model);
+        }
+    }
+    std::shared_ptr<IModel> m_renaming;
     void cb_Delete()
     {
         auto& b = m_models.child();
@@ -659,12 +741,14 @@ struct Manager_Window : Fl_Double_Window
         , m_models(0, 0, w / 2, h, "Models")
         , m_workers(w / 2, 0, w / 2, h / 2)
         , m_tourny(w / 2, h / 2, w / 2, h / 2)
+        , m_modal_rename("Rename Model")
     {
         m_menu_bar.menu(s_menu_items);
         {
             std::lock_guard<std::mutex> lk(s_models_list.m);
             update();
         }
+        m_modal_rename.on_submit(thunkv<Manager_Window, &Manager_Window::cb_Rename_Ok>, this);
         m_workers.child().m_freeze.callback((Fl_Callback*)::thunkv<Manager_Window, &Manager_Window::cb_Freeze>, this);
         m_workers.child().m_thaw.callback((Fl_Callback*)::thunkv<Manager_Window, &Manager_Window::cb_Thaw>, this);
         m_tourny.child().m_add.callback((Fl_Callback*)::thunkv<Manager_Window, &Manager_Window::cb_TAdd>, this);
@@ -683,6 +767,7 @@ struct Manager_Window : Fl_Double_Window
     Margins<Fl_Multi_Browser, 10, 35, 5, 25> m_models;
     Margins<Workers_Browser, 5, 35, 10, 5> m_workers;
     Margins<Tournament_Browser, 5, 5, 10, 10> m_tourny;
+    Rename_Modal_Window m_modal_rename;
 
     static inline const Fl_Menu_Item s_menu_items[] = {
         {"&File", 0, 0, 0, 64, (uchar)FL_NORMAL_LABEL, 0, 14, 0},

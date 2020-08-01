@@ -36,6 +36,8 @@ struct IModel
 
     void increment_name() { ++id; }
     std::string name() const { return m_name + "#" + std::to_string(id); }
+    const std::string& root_name() const { return m_name; }
+    void set_root_name(std::string&& name) { m_name = std::move(name); }
 
 private:
     std::string m_name;
