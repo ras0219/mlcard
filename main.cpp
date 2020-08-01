@@ -36,6 +36,7 @@
 #include <stdio.h>
 #include <string>
 #include <thread>
+#include <time.h>
 #include <valarray>
 #include <vector>
 #include <winrt/base.h>
@@ -86,12 +87,21 @@ struct Graph : Fl_Widget
     std::vector<std::vector<double>> valss;
 };
 
+static long long get_nanos()
+{
+    struct timespec ts;
+    timespec_get(&ts, TIME_UTC);
+    return (long long)ts.tv_sec * 1000000000L + ts.tv_nsec;
+}
+
 struct MLStats_Group : Fl_Group
 {
     MLStats_Group(int x, int y, int w, int h, const char* label = 0)
         : Fl_Group(x, y, w, h, label)
-        , m_err(x + 40, y, w - 40, 20, "Error")
+        , m_err(x + 40, y, w - 350, 20, "Error")
         , m_trials(x + 40, y + 22, w - 40, 20, "Trials")
+        , m_trialsPerSec(x + 350 + 20, y, 75, 20, "Trials/Second")
+        , m_FPS(x + 200, y, 70, 20, "FPS")
         , m_learn_rate(x, y + 44, w, 20, "Learning Rate")
         , m_error_graph(x, y + 82, w, h - 82, "Error")
         , m_resize_box(x + w / 2, y + 82, 1, h - 82)
@@ -119,21 +129,66 @@ struct MLStats_Group : Fl_Group
         auto label = fmt::format("{}", i);
         m_trials.value(label.c_str());
     }
+    void trialsPerSec_value(float f)
+    {
+        auto label = fmt::format("{:+.1f}", f);
+        m_trialsPerSec.value(label.c_str());
+    }
+    void FPS_value(float f)
+    {
+        auto label = fmt::format("{:+.1f}", f);
+        m_FPS.value(label.c_str());
+    }
 
     void on_idle()
     {
-        error_value(s_workers[0]->m_err[0]);
-        trials_value(s_workers[0]->m_trials.load());
+        static constexpr double FPS = 60.0;
+        static constexpr long long NS_PER_MS = 1e6;
+        static constexpr long long MS_PER_S = 1e3;
+        static constexpr long long NS_PER_S = 1e9;
+        static constexpr long long NS_PER_FRAME = NS_PER_S / FPS;
 
-        m_error_graph.valss[0].clear();
-        std::copy(
-            std::begin(s_workers[0]->m_err), std::end(s_workers[0]->m_err), std::back_inserter(m_error_graph.valss[0]));
-        m_error_graph.damage(FL_DAMAGE_ALL);
-        m_error_graph.redraw();
+        static long prevDelta = 0;
+        static long long prevTimer = get_nanos();
+        static float smoothed_tps = 0.0;
+        static double smoothed_fps = 60.0;
+
+        long long timer = get_nanos();
+        long delta = timer - prevTimer + prevDelta;
+        long true_delta = timer - prevTimer;
+
+        if (delta >= NS_PER_FRAME)
+        {
+            prevDelta = delta % NS_PER_FRAME;
+            prevTimer = timer;
+
+            static int previousTrials_value = 0;
+            int trials = s_workers[0]->m_trials.load();
+
+            error_value(s_workers[0]->m_err[0]);
+            trials_value(trials);
+
+            smoothed_tps = 0.99 * smoothed_tps + 0.01 * (trials - previousTrials_value) * 1e9 / delta;
+            trialsPerSec_value(smoothed_tps);
+
+            smoothed_fps = 0.9 * smoothed_fps + 0.1 * NS_PER_S / true_delta;
+            FPS_value(smoothed_fps);
+
+            m_error_graph.valss[0].clear();
+            std::copy(std::begin(s_workers[0]->m_err),
+                      std::end(s_workers[0]->m_err),
+                      std::back_inserter(m_error_graph.valss[0]));
+            m_error_graph.damage(FL_DAMAGE_ALL);
+            m_error_graph.redraw();
+
+            previousTrials_value = trials;
+        }
     }
 
     Fl_Output m_err;
     Fl_Output m_trials;
+    Fl_Output m_trialsPerSec;
+    Fl_Output m_FPS;
     Fl_Counter m_learn_rate;
     Graph m_error_graph;
     Fl_Box m_resize_box;
