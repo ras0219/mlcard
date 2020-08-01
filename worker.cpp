@@ -3,21 +3,22 @@
 #include "game.h"
 #include "model.h"
 
-static void play_game(Game& g, IModel& m, std::vector<Turn>& turns)
+static unsigned int play_game(Game& g, IModel& m, std::vector<Turn>& turns)
 {
     g.init();
-    turns.clear();
-    turns.reserve(40);
-
+    unsigned int turn_count = 0;
     bool exploregame = (rand() * 1.0 / RAND_MAX) > 0.5;
 
     while (g.cur_result() == Game::Result::playing)
     {
-        turns.emplace_back();
-        auto& turn = turns.back();
+        turn_count++;
+
+        if (turn_count > turns.size()) turns.emplace_back();
+
+        auto& turn = turns[turn_count - 1];
         turn.input = g.encode();
-        turn.eval = m.make_eval();
-        turn.eval_full = m.make_eval();
+        if (!turn.eval) turn.eval = m.make_eval();
+        if (!turn.eval_full) turn.eval_full = m.make_eval();
         m.calc(*turn.eval, turn.input, false);
         m.calc(*turn.eval_full, turn.input, true);
 
@@ -41,6 +42,7 @@ static void play_game(Game& g, IModel& m, std::vector<Turn>& turns)
 
         g.advance(turn.chosen_action);
     }
+    return turn_count;
 }
 
 static void replay_game(IModel& m, std::vector<Turn>& turns)
@@ -90,7 +92,6 @@ extern "C"
     __declspec(dllimport) void __stdcall SetThreadPriority(void*, int);
     __declspec(dllimport) void* __stdcall GetCurrentThread();
 }
-
 void Worker::work()
 {
     SetThreadPriority(GetCurrentThread(), /*THREAD_MODE_BACKGROUND_BEGIN*/ 0x00010000);
@@ -104,8 +105,9 @@ void Worker::work()
         m_replace_model = false;
     }
     Game g;
-
+    unsigned int turn_count = 0;
     std::vector<Turn> turns;
+    turns.resize(40);
 
     double total_error = 0.0;
 
@@ -117,7 +119,7 @@ void Worker::work()
         // if (total_error > (2 * total_m_err / std::size(m_err) + 1e-3))
         //    replay_game(m, turns);
         // else
-        play_game(g, *m, turns);
+        turn_count = play_game(g, *m, turns);
 
         m->backprop_init();
 
@@ -127,7 +129,7 @@ void Worker::work()
 
         total_error = 0.0;
 
-        auto& turn = turns.back();
+        auto& turn = turns[turn_count - 1];
         // full model
         auto predicted = turn.eval_full->pct_for_action(turn.chosen_action);
         auto error = predicted - static_cast<double>(last_player_won);
@@ -138,7 +140,7 @@ void Worker::work()
         total_error += error * error;
 
         double next_turn_expected = static_cast<double>(last_player_won);
-        for (int i = (int)turns.size() - 2; i >= 0; --i)
+        for (int i = (int)turn_count - 2; i >= 0; --i)
         {
             auto& turn = turns[i];
             auto& next_turn = turns[i + 1];
@@ -152,8 +154,9 @@ void Worker::work()
             next_turn_expected = expected;
         }
 
-        for (auto&& turn : turns)
+        for (int i = 0; i < turn_count; i++)
         {
+            auto&& turn = turns[i];
             turn.error.realloc_uninitialized(turn.input.avail_actions());
             turn.error.slice().assign_sub(turn.eval->out(), turn.eval_full->out());
             m->backprop(*turn.eval, turn.input, turn.error, false);

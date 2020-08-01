@@ -13,9 +13,9 @@ struct IEval
     virtual ~IEval() { }
 
     virtual int best_action() = 0;
-    virtual double pct_for_action(int i) = 0;
-    virtual double clamped_best_pct() = 0;
-    virtual double clamped_best_pct(int replace_i, double replace_pct) = 0;
+    virtual float pct_for_action(int i) = 0;
+    virtual float clamped_best_pct() = 0;
+    virtual float clamped_best_pct(int replace_i, float replace_pct) = 0;
     virtual vec_slice out() = 0;
 };
 
@@ -28,8 +28,8 @@ struct IModel
     virtual void calc(IEval& e, Encoded& input, bool full) = 0;
     virtual void backprop(IEval& e, Encoded& input, vec_slice grad, bool full) = 0;
     virtual void backprop_init() = 0;
-    virtual void learn(double learn_rate) = 0;
-    virtual void normalize(double learn_rate) = 0;
+    virtual void learn(float learn_rate) = 0;
+    virtual void normalize(float learn_rate) = 0;
 
     virtual std::unique_ptr<IModel> clone() const = 0;
     virtual void serialize(RJWriter& w) const = 0;
