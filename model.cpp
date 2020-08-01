@@ -451,8 +451,9 @@ struct Model final : IModel
         }
 
         vec_slice all() { return data.slice(); }
-        vec_slice board() { return data.slice(0, board_out_width); }
-        vec_slice cards() { return data.slice(board_out_width); }
+        vec_slice board() { return data.slice(1, board_out_width); }
+        vec_slice cards() { return data.slice(1 + board_out_width); }
+        vec_slice full() { return data.slice(0, 1); }
     };
 
     struct Eval : IEval
@@ -522,7 +523,7 @@ struct Model final : IModel
         auto l_dims = dims.children.at("l").dims;
         auto l3_out_width = l_dims.back();
         l_dims.pop_back();
-        l.randomize(board_out_width + card_out_width, l_dims, l3_out_width);
+        l.randomize(1 + board_out_width + card_out_width, l_dims, l3_out_width);
 
         p.randomize(l3_out_width, 1);
         card_out_model.randomize(l3_out_width + card_out_width, dims.children.at("card_out").dims);
@@ -532,7 +533,8 @@ struct Model final : IModel
     void calc_inner(Eval& e, Encoded& g, bool full)
     {
         b.calc(e.b, g.board());
-        e.l_input.realloc_uninitialized(b.out_size() + card_out_width, b.out_size());
+        e.l_input.realloc_uninitialized(1 + b.out_size() + card_out_width, b.out_size());
+        e.l_input.full()[0] = full;
         e.l_input.board().assign(e.b.out());
         auto l_input_cards = e.l_input.cards();
         l_input_cards.assign(0);
@@ -596,7 +598,7 @@ struct Model final : IModel
         }
         l.backprop(e.l, e.l_input.all(), e.l_grad);
 
-        auto l_card_errs = e.l.errs().slice(b.out_size());
+        auto l_card_errs = e.l.errs().slice(1 + b.out_size());
         if (full)
         {
             for (int i = 0; i < g.you_cards; ++i)
@@ -610,7 +612,7 @@ struct Model final : IModel
             e.cards_in[i].grad.slice().assign_add(l_card_errs, e.cards_out[i].err().slice(l.out_size()));
             card_in_model.backprop(e.cards_in[i], g.me_card(i));
         }
-        b.backprop(e.b, g.board(), e.l.errs().slice(0, b.out_size()));
+        b.backprop(e.b, g.board(), e.l.errs().slice(1, b.out_size()));
     }
     void learn(float lr)
     {

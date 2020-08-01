@@ -328,7 +328,7 @@ struct Game_Group : Fl_Group
 
 void Turn_Viewer::on_player_action() { ((Game_Group*)parent())->on_player_action(); }
 
-void open_cb(Fl_Widget* w, void* v)
+std::unique_ptr<IModel> open_model()
 {
     HRESULT hr;
 
@@ -340,17 +340,17 @@ void open_cb(Fl_Widget* w, void* v)
     winrt::com_ptr<IFileOpenDialog> dialog = winrt::create_instance<IFileOpenDialog>(winrt::guid_of<FileOpenDialog>());
 
     hr = dialog->SetFileTypes(ARRAYSIZE(rgSpec), rgSpec);
-    if (!SUCCEEDED(hr)) return;
+    if (!SUCCEEDED(hr)) return nullptr;
 
     hr = dialog->Show(NULL);
-    if (!SUCCEEDED(hr)) return;
+    if (!SUCCEEDED(hr)) return nullptr;
 
     winrt::com_ptr<IShellItem> pItem;
     hr = dialog->GetResult(pItem.put());
-    if (!SUCCEEDED(hr)) return;
+    if (!SUCCEEDED(hr)) return nullptr;
     PWSTR pszPath;
     hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszPath);
-    if (!SUCCEEDED(hr)) return;
+    if (!SUCCEEDED(hr)) return nullptr;
     std::wstring p(pszPath);
     CoTaskMemFree(pszPath);
 
@@ -360,8 +360,7 @@ void open_cb(Fl_Widget* w, void* v)
 
     try
     {
-        auto model = load_model(ss.str());
-        s_workers[0]->replace_model(std::move(model));
+        return load_model(ss.str());
     }
     catch (const std::exception& e)
     {
@@ -373,9 +372,10 @@ void open_cb(Fl_Widget* w, void* v)
         fmt::print(L"Failed while loading model from {}: ", p);
         fmt::print("{}\n", e);
     }
+    return nullptr;
 }
 
-void save_cb(Fl_Widget* w, void* v)
+void save_model(IModel& model)
 {
     HRESULT hr;
 
@@ -414,7 +414,7 @@ void save_cb(Fl_Widget* w, void* v)
     {
         StringBuffer s;
         RJWriter wr(s);
-        s_workers[0]->serialize_model(wr);
+        model.serialize(wr);
 
         std::ofstream os(path);
         os.write(s.GetString(), s.GetSize());
@@ -630,6 +630,15 @@ struct Rename_Modal_Window : Fl_Window
     void* m_ok_u = nullptr;
 };
 
+struct SWindows
+{
+    Fl_Window* help;
+    Fl_Window* worker0;
+    Fl_Window* tournament;
+    Fl_Window* play;
+};
+static SWindows s_windows;
+
 struct Manager_Window : Fl_Double_Window
 {
     struct Workers_Browser : Fl_Group
@@ -713,8 +722,31 @@ struct Manager_Window : Fl_Double_Window
         m_workers.child().m_browser.redraw();
     }
     void cb_New() { }
-    void cb_Open() { }
-    void cb_Save() { }
+    void cb_Open()
+    {
+        auto model = open_model();
+        if (!model) return;
+        std::lock_guard lk(s_models_list.m);
+        s_models_list.models.push_back(std::move(model));
+        auto& b = m_models.child();
+        b.add(s_models_list.models.back()->name().c_str());
+        b.damage(FL_DAMAGE_ALL);
+        b.redraw();
+    }
+    void cb_Save()
+    {
+        auto& b = m_models.child();
+        int b_line = b.value();
+        if (b_line == 0) return;
+
+        std::shared_ptr<IModel> m;
+        {
+            std::lock_guard<std::mutex> lk(s_models_list.m);
+            if (b.size() != s_models_list.models.size()) return;
+            m = s_models_list.models[b_line - 1];
+        }
+        save_model(*m);
+    }
     void cb_Rename()
     {
         if (m_modal_rename.visible())
@@ -796,7 +828,7 @@ struct Manager_Window : Fl_Double_Window
     }
     void cb_TRemove() { }
 
-    Manager_Window(int w, int h, const char* name = "Manager")
+    Manager_Window(int w, int h, const char* name = "MLCard Manager - MLCard")
         : Fl_Double_Window(w, h, name)
         , m_menu_bar(0, 0, w, 30)
         , m_models(0, 0, w / 2, h, "Models")
@@ -824,6 +856,11 @@ struct Manager_Window : Fl_Double_Window
             m_models.child(), s_models_list.models, [](const std::shared_ptr<IModel>& model) { return model->name(); });
     }
 
+    void cb_show_play() { s_windows.play->show(); }
+    void cb_show_help() { s_windows.help->show(); }
+    void cb_show_tournament() { s_windows.tournament->show(); }
+    void cb_show_worker0() { s_windows.worker0->show(); }
+
     Fl_Menu_Bar m_menu_bar;
     Margins<Fl_Multi_Browser, 10, 35, 5, 25> m_models;
     Margins<Workers_Browser, 5, 35, 10, 5> m_workers;
@@ -837,6 +874,12 @@ struct Manager_Window : Fl_Double_Window
         {"&Save", 0x40073, thunk1<Manager_Window, &cb_Save>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
         {"&Rename", 0xffbf, thunk1<Manager_Window, &cb_Rename>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
         {"&Delete", 0xffff, thunk1<Manager_Window, &cb_Delete>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
+        {0, 0, 0, 0, 0, 0, 0, 0, 0},
+        {"&Windows", 0, 0, 0, 64, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
+        {"&Play", 0x40073, thunk1<Manager_Window, &cb_show_play>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
+        {"&Worker0", 0x4006f, thunk1<Manager_Window, &cb_show_worker0>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
+        {"&Tournament", 0x40073, thunk1<Manager_Window, &cb_show_tournament>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
+        {"&How to Play", 0x4006e, thunk1<Manager_Window, &cb_show_help>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
         {0, 0, 0, 0, 0, 0, 0, 0, 0},
         {0, 0, 0, 0, 0, 0, 0, 0, 0}};
 };
@@ -1186,36 +1229,32 @@ int main(int argc, char* argv[])
     s_workers[1]->replace_model(make_model(default_model_dims(), "bgB"));
     s_workers[2]->replace_model(make_model(medium_model_dims(), "llA"));
     auto llB = default_model_dims();
-    llB.children["card_in"].dims = {30, 30, 30};
-    llB.children["you_card_in"].dims = {30, 30, 30};
-    llB.children["card_out"].dims = {50, 20};
+    llB.children["card_out"].dims = {50, 40, 30};
     s_workers[3]->replace_model(make_model(llB, "llB"));
 
-    auto win = std::make_unique<Fl_Double_Window>(490, 400, "MLCard");
+    auto win = std::make_unique<Fl_Double_Window>(490, 400, "Worker 0 - MLCard");
     win->begin();
-    Fl_Menu_Bar menu_bar(0, 0, win->w(), 30);
-    menu_bar.add("&File/&Open", "^o", &open_cb);
-    menu_bar.add("&File/&Save", "^s", &save_cb);
-    s_mlgroup = new MLStats_Group(10, 40, win->w() - 20, win->h() - 50);
+    s_mlgroup = new MLStats_Group(10, 10, win->w() - 20, win->h() - 20);
     win->end();
     win->resizable(new Fl_Box(10, 10, win->w() - 20, win->h() - 20));
-    win->show(argc, argv);
+    s_windows.worker0 = win.get();
 
-    auto winx = std::make_unique<Fl_Double_Window>(600, 700, "Crossplay");
+    auto winx = std::make_unique<Fl_Double_Window>(600, 700, "MLCard Tournament - MLCard");
     winx->begin();
     s_tgroup = new Tournament_Group(10, 10, winx->w() - 20, winx->h() - 20);
     winx->end();
     winx->resizable(new Fl_Box(10, 10, winx->w() - 20, winx->h() - 20));
+    s_windows.tournament = winx.get();
     winx->show();
 
-    auto win2 = std::make_unique<Fl_Double_Window>(600, 700, "MLCard Game");
+    auto win2 = std::make_unique<Fl_Double_Window>(600, 700, "MLCard Game - MLCard");
     win2->begin();
     s_gamegroup = new Game_Group(10, 10, win2->w() - 20, win2->h() - 20);
     win2->end();
     win2->resizable(new Fl_Box(10, 10, win2->w() - 20, win2->h() - 20));
-    win2->show();
+    s_windows.play = win2.get();
 
-    auto win3 = std::make_unique<Fl_Double_Window>(600, 700, "How to Play");
+    auto win3 = std::make_unique<Fl_Double_Window>(600, 700, "How to Play - MLCard");
     win3->begin();
     auto hv = new Fl_Help_View(10, 10, win3->w() - 20, win3->h() - 20);
     hv->value(Game::help_html("index"));
@@ -1227,9 +1266,9 @@ int main(int argc, char* argv[])
     });
     win3->end();
     win3->resizable(new Fl_Box(10, 10, win3->w() - 20, win3->h() - 20));
-    win3->show();
+    s_windows.help = win3.get();
 
-    (new Manager_Window(600, 700))->show();
+    (new Manager_Window(600, 700))->show(argc, argv);
 
     Fl::add_idle([](void* v) {
         s_mlgroup->on_idle();
