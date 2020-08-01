@@ -111,7 +111,7 @@ struct MLStats_Group : Fl_Group
         m_learn_rate.value(s_workers[0]->m_learn_rate);
         m_learn_rate.callback([](Fl_Widget* w, void* data) {
             auto self = (Fl_Counter*)w;
-            s_workers[0]->m_learn_rate = self->value();
+            s_workers[0]->m_learn_rate = (float)self->value();
         });
         m_error_graph.valss.resize(1);
         this->resizable(&m_resize_box);
@@ -401,7 +401,11 @@ void save_cb(Fl_Widget* w, void* v)
     hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszPath);
     if (!SUCCEEDED(hr)) return;
 
-    auto path = fmt::format(L"{}{}", pszPath, i == 1 ? L".json" : L"");
+    std::wstring path = pszPath;
+    if (i == 1 && (path.size() < 6 || path.substr(path.size() - 5) != L".json"))
+    {
+        path += L".json";
+    }
     CoTaskMemFree(pszPath);
 
     try
