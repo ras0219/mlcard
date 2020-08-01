@@ -125,7 +125,7 @@ void Worker::work()
 
         // First, fill in the error values
         auto last_player_won =
-            turns.size() % 2 == 1 ? (g.cur_result() == Game::Result::p1_win) : (g.cur_result() == Game::Result::p2_win);
+            turn_count % 2 == 1 ? (g.cur_result() == Game::Result::p1_win) : (g.cur_result() == Game::Result::p2_win);
 
         total_error = 0.0;
 
@@ -171,7 +171,7 @@ void Worker::work()
         learn_tick++;
         if (learn_tick >= 10000) learn_tick = 0;
         if (learn_tick % 10 == 9) m->learn(m_learn_rate);
-        if (learn_tick % 1000 == 999) m->normalize(m_learn_rate);
+        if (learn_tick % 10000 == 9999) m->normalize(m_learn_rate * 1e-9f);
 
         update_tick++;
         if (update_tick >= 100)
