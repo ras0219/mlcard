@@ -8,6 +8,7 @@
 
 struct Turn
 {
+    bool player2_turn = false;
     Encoded input;
 
     std::unique_ptr<IEval> eval, eval_full;

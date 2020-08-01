@@ -17,6 +17,7 @@ static unsigned int play_game(Game& g, IModel& m, std::vector<Turn>& turns)
 
         auto& turn = turns[turn_count - 1];
         turn.input = g.encode();
+        turn.player2_turn = g.player2_turn;
         if (!turn.eval) turn.eval = m.make_eval();
         if (!turn.eval_full) turn.eval_full = m.make_eval();
         m.calc(*turn.eval, turn.input, false);
@@ -113,28 +114,21 @@ void Worker::work()
 
     while (!m_worker_exit)
     {
-        // double total_m_err = 0.0;
-        // for (double x : m_err)
-        //    total_m_err += x;
-        // if (total_error > (2 * total_m_err / std::size(m_err) + 1e-3))
-        //    replay_game(m, turns);
-        // else
         turn_count = play_game(g, *m, turns);
 
         m->backprop_init();
 
         // First, fill in the error values
-        auto last_player_won =
-            turn_count % 2 == 1 ? (g.cur_result() == Game::Result::p1_win) : (g.cur_result() == Game::Result::p2_win);
+        auto& turn = turns[turn_count - 1];
+        auto last_player_won = g.cur_result() == (turn.player2_turn ? Game::Result::p2_win : Game::Result::p1_win);
 
         total_error = 0.0;
 
-        auto& turn = turns[turn_count - 1];
         // full model
         auto predicted = turn.eval_full->pct_for_action(turn.chosen_action);
         auto error = predicted - static_cast<float>(last_player_won);
         turn.error_full.realloc(turn.input.avail_actions(), 0.0f);
-        turn.error_full[turn.chosen_action] = error * 10;
+        turn.error_full[turn.chosen_action] = error * turn.input.avail_actions();
 
         m->backprop(*turn.eval_full, turn.input, turn.error_full, true);
         total_error += error * error;
@@ -145,10 +139,14 @@ void Worker::work()
             auto& turn = turns[i];
             auto& next_turn = turns[i + 1];
             auto predicted = turn.eval_full->pct_for_action(turn.chosen_action);
-            auto expected = (1.0f - next_turn.eval_full->clamped_best_pct(next_turn.chosen_action, next_turn_expected));
+            auto expected = next_turn.eval_full->clamped_best_pct(next_turn.chosen_action, next_turn_expected);
+            if (next_turn.player2_turn != turn.player2_turn)
+            {
+                expected = 1.0f - expected;
+            }
             auto error = predicted - expected;
             turn.error_full.realloc(turn.input.avail_actions(), 0.0);
-            turn.error_full[turn.chosen_action] = error * 10;
+            turn.error_full[turn.chosen_action] = error * turn.input.avail_actions();
             m->backprop(*turn.eval_full, turn.input, turn.error_full, true);
             total_error += error * error;
             next_turn_expected = expected;
