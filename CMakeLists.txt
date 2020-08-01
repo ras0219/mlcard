@@ -10,7 +10,6 @@ project(mlcard CXX)
 
 if(MSVC)
     add_compile_options(/permissive- /FC /arch:AVX2 /fp:fast /Gs /GS-)
- #   add_link_options(/PROFILE)
 endif()
 
 find_package(FLTK CONFIG REQUIRED)
