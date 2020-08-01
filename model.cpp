@@ -24,7 +24,7 @@ void deserialize(vec& data, const rapidjson::Value& v)
     data.realloc_uninitialized(w.Size());
     for (unsigned i = 0; i < w.Size(); ++i)
     {
-        data[i] = w[i].GetDouble();
+        data[i] = w[i].GetFloat();
     }
 }
 void serialize(const vec& data, RJWriter& w)
@@ -55,7 +55,7 @@ struct Nonlinear
 
 struct Layer
 {
-    // double[4][In+1][Out]
+    // float[4][In+1][Out]
     vec m_data;
 
     int m_deltas = 0;
@@ -78,7 +78,7 @@ struct Layer
 
         for (size_t j = 0; j < m_output; ++j)
         {
-            double acc = r_init[j];
+            float acc = r_init[j];
             for (size_t i = 0; i < m_input - 1; ++i)
             {
                 acc += coefs().row(i)[j] * input[i];
@@ -110,7 +110,7 @@ struct Layer
         ++m_deltas;
     }
 
-    void learn(double learn_rate)
+    void learn(float learn_rate)
     {
         if (m_deltas == 0) return;
 
@@ -128,7 +128,7 @@ struct Layer
         }
     }
 
-    void normalize(double learn_rate)
+    void normalize(float learn_rate)
     {
         auto l1_norm = 1e-9 * learn_rate;
 
@@ -209,8 +209,8 @@ struct ReLULayer
         l.backprop(errs, in, inner, tmp);
     }
 
-    void learn(double learn_rate) { l.learn(learn_rate); }
-    void normalize(double learn_rate) { l.normalize(learn_rate); }
+    void learn(float learn_rate) { l.learn(learn_rate); }
+    void normalize(float learn_rate) { l.normalize(learn_rate); }
 
     void deserialize(const Value& v) { l.deserialize(v); }
     void serialize(RJWriter& w) const { l.serialize(w); }
@@ -317,12 +317,12 @@ struct ReLULayers
             ls[0].backprop(errs, in, inner, out, grad);
         }
     }
-    void learn(double learn_rate)
+    void learn(float learn_rate)
     {
         for (auto& l : ls)
             l.learn(learn_rate);
     }
-    void normalize(double learn_rate)
+    void normalize(float learn_rate)
     {
         for (auto& l : ls)
             l.normalize(learn_rate);
@@ -375,8 +375,8 @@ struct PerCardInputModel
     void calc(Eval& e, vec_slice input) { l.calc(e.l, input); }
     void backprop_init() { l.backprop_init(); }
     void backprop(Eval& e, vec_slice input) { l.backprop(e.l, input, e.grad); }
-    void learn(double learn_rate) { l.learn(learn_rate); }
-    void normalize(double learn_rate) { l.normalize(learn_rate); }
+    void learn(float learn_rate) { l.learn(learn_rate); }
+    void normalize(float learn_rate) { l.normalize(learn_rate); }
     void deserialize(const Value& v) { l.deserialize(v); }
     void serialize(RJWriter& w) const { l.serialize(w); }
 };
@@ -398,8 +398,8 @@ struct PerYouCardInputModel
     void calc(Eval& e, vec_slice input) { l.calc(e.l1, input); }
     void backprop_init() { l.backprop_init(); }
     void backprop(Eval& e, vec_slice input, vec_slice grad) { l.backprop(e.l1, input, grad); }
-    void learn(double lr) { l.learn(lr); }
-    void normalize(double lr) { l.normalize(lr); }
+    void learn(float lr) { l.learn(lr); }
+    void normalize(float lr) { l.normalize(lr); }
     void deserialize(const Value& v) { l.deserialize(v); }
     void serialize(RJWriter& w) const { l.serialize(w); }
 };
@@ -420,8 +420,8 @@ struct PerCardOutputModel
     void calc(Eval& e) { l.calc(e.l, e.input); }
     void backprop_init() { l.backprop_init(); }
     void backprop(Eval& e, vec_slice card_grad) { l.backprop(e.l, e.input, card_grad); }
-    void learn(double lr) { l.learn(lr); }
-    void normalize(double lr) { l.normalize(lr); }
+    void learn(float lr) { l.learn(lr); }
+    void normalize(float lr) { l.normalize(lr); }
     void deserialize(const Value& v) { l.deserialize(v); }
     void serialize(RJWriter& w) const { l.serialize(w); }
 };
@@ -470,16 +470,16 @@ struct Model final : IModel
 
         vec all_out;
 
-        double out_p() { return all_out[0]; }
-        double out_card(int i) { return all_out[i + 1]; }
-        double max_out() { return all_out.slice(1).max(all_out[0]); }
+        float out_p() { return all_out[0]; }
+        float out_card(int i) { return all_out[i + 1]; }
+        float max_out() { return all_out.slice(1).max(all_out[0]); }
 
         virtual vec_slice out() { return all_out; }
-        virtual double pct_for_action(int i) override { return all_out[i]; }
+        virtual float pct_for_action(int i) override { return all_out[i]; }
         virtual int best_action() override
         {
             int x = 0;
-            double win_pct = all_out[0];
+            float win_pct = all_out[0];
             for (int i = 1; i < all_out.size(); ++i)
             {
                 auto p = all_out[i];
@@ -492,14 +492,14 @@ struct Model final : IModel
             return x;
         }
 
-        virtual double clamped_best_pct() override { return std::max(0.0, std::min(1.0, max_out())); }
-        virtual double clamped_best_pct(int i, double p) override
+        virtual float clamped_best_pct() override { return std::max(0.0f, std::min(1.0f, max_out())); }
+        virtual float clamped_best_pct(int i, float p) override
         {
             for (int x = 0; x < i; ++x)
                 p = std::max(p, all_out[x]);
             for (int x = i + 1; x < all_out.size(); ++x)
                 p = std::max(p, all_out[x]);
-            return std::max(0.0, std::min(1.0, p));
+            return std::max(0.0f, std::min(1.0f, p));
         }
     };
 
@@ -613,7 +613,7 @@ struct Model final : IModel
         }
         b.backprop(e.b, g.board(), e.l.errs().slice(0, b.out_size()));
     }
-    void learn(double lr)
+    void learn(float lr)
     {
         b.learn(lr);
         l.learn(lr);
@@ -624,7 +624,7 @@ struct Model final : IModel
         card_out_model.learn(lr);
     }
 
-    void normalize(double lr)
+    void normalize(float lr)
     {
         b.normalize(lr);
         l.normalize(lr);

@@ -9,7 +9,7 @@ set(CMAKE_TOOLCHAIN_FILE ${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/scripts/buildsystems/
 project(mlcard CXX)
 
 if(MSVC)
-    add_compile_options(/permissive- /FC)
+    add_compile_options(/permissive- /FC /arch:AVX2 /fp:fast /Gs /GS-)
 endif()
 
 find_package(FLTK CONFIG REQUIRED)
