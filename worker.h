@@ -15,6 +15,7 @@ struct Worker
     void replace_model(std::unique_ptr<struct IModel> model);
     std::unique_ptr<struct IModel> clone_model();
     void serialize_model(struct RJWriter& w);
+    std::string model_name();
 
     void start();
     void join();

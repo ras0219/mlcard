@@ -9,7 +9,7 @@ enum class ArtifactType
 {
     DirectImmune,
     CreatureImmune,
-    MaxMana,
+    DoubleMana,
     HealCauseDamage,
     LandCauseDamage,
     Count,
@@ -23,6 +23,7 @@ struct Card
         Direct,
         Heal,
         Land,
+        Draw3,
         Artifact,
         Count,
     };

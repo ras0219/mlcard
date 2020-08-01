@@ -125,9 +125,10 @@ const char* Game::help_html(std::string_view pg)
            "<li>Heal X: Costs X. Increase the current player's health by X.</li>"
            "<li>Creature X: Costs X. Set the current player's creature value to X if X is larger than the current "
            "player's creature value.</li>"
+           "<li>Draw X: Costs X. Draws 3 cards.</li>"
            "<li>Artifact X: Costs 0. Replaces the player's current artifact."
            "<ul>"
-           "<li>Infinite Mana: Player can play cards without paying mana.</li>"
+           "<li>Double Mana: Player can play cards at half cost.</li>"
            "<li>Half Creature Damage: Player takes half damage rounded down from creatures.</li>"
            "<li>Direct Damage Immunity: Player takes no damage from non-creature sources.</li>"
            "<li>Heals cause Damage: Heal X additionally acts as Damage X.</li>"
@@ -162,7 +163,7 @@ void Game::advance(int action)
         {
             me.artifact = card.artifact;
         }
-        else if (me.mana >= card.value || me.artifact == ArtifactType::MaxMana)
+        else if (me.mana >= card.value || (me.artifact == ArtifactType::DoubleMana && me.mana * 2 >= card.value))
         {
             if (card.type == Card::Type::Creature)
             {
@@ -174,6 +175,13 @@ void Game::advance(int action)
                 {
                     you.health -= card.value;
                 }
+            }
+            else if (card.type == Card::Type::Draw3)
+            {
+                me.avail.emplace_back();
+                me.avail.back().randomize();
+                me.avail.emplace_back();
+                me.avail.back().randomize();
             }
             else if (card.type == Card::Type::Heal)
             {
@@ -235,7 +243,7 @@ const char* artifact_name(ArtifactType t)
         case ArtifactType::DirectImmune: return "Direct Damage Immunity";
         case ArtifactType::HealCauseDamage: return "Heals cause Damage";
         case ArtifactType::LandCauseDamage: return "Lands cause Damage";
-        case ArtifactType::MaxMana: return "Infinite Mana";
+        case ArtifactType::DoubleMana: return "Double Mana";
         default: std::terminate();
     }
 }
@@ -290,7 +298,8 @@ std::vector<std::string> Game::format_actions()
         else
         {
             const char* prefix = "Play";
-            const char* suffix = p.avail[i].value > p.mana && p.artifact != ArtifactType::MaxMana ? " as Land" : "";
+            auto mana = p.artifact != ArtifactType::DoubleMana ? p.mana : p.mana * 2;
+            const char* suffix = p.avail[i].value > mana ? " as Land" : "";
             if (p.avail[i].type == Card::Type::Creature)
             {
                 actions.push_back(fmt::format("{} Creature {}{}", prefix, p.avail[i].value, suffix));
@@ -302,6 +311,10 @@ std::vector<std::string> Game::format_actions()
             else if (p.avail[i].type == Card::Type::Heal)
             {
                 actions.push_back(fmt::format("{} Heal {}{}", prefix, p.avail[i].value, suffix));
+            }
+            else if (p.avail[i].type == Card::Type::Draw3)
+            {
+                actions.push_back(fmt::format("{} Draw {}{}", prefix, p.avail[i].value, suffix));
             }
             else
                 std::terminate();

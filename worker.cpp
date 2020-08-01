@@ -9,6 +9,8 @@ static void play_game(Game& g, IModel& m, std::vector<Turn>& turns)
     turns.clear();
     turns.reserve(40);
 
+    bool exploregame = (rand() * 1.0 / RAND_MAX) > 0.5;
+
     while (g.cur_result() == Game::Result::playing)
     {
         turns.emplace_back();
@@ -19,15 +21,22 @@ static void play_game(Game& g, IModel& m, std::vector<Turn>& turns)
         m.calc(*turn.eval, turn.input, false);
         m.calc(*turn.eval_full, turn.input, true);
 
-        // choose action to take
-        auto r = rand() * 1.0 / RAND_MAX;
-        if (r < 0.2)
+        if (exploregame)
         {
-            turn.chosen_action = static_cast<int>(r * turn.input.avail_actions() / 0.2);
+            // choose action to take
+            auto r = rand() * 1.0 / RAND_MAX;
+            if (r < 0.3)
+            {
+                turn.chosen_action = static_cast<int>(r * turn.input.avail_actions() / 0.3);
+            }
+            else
+            {
+                turn.take_ai_action();
+            }
         }
         else
         {
-            turn.take_ai_action();
+            turn.take_full_ai_action();
         }
 
         g.advance(turn.chosen_action);
@@ -57,6 +66,12 @@ std::unique_ptr<IModel> Worker::clone_model()
     return m_model->clone();
 }
 
+std::string Worker::model_name()
+{
+    std::lock_guard<std::mutex> lk(m_mutex);
+    return m_model ? m_model->name() : "none";
+}
+
 void Worker::serialize_model(struct RJWriter& w)
 {
     std::lock_guard<std::mutex> lk(m_mutex);
@@ -73,6 +88,7 @@ void Worker::join()
 void Worker::work()
 {
     int update_tick = 0;
+    int learn_tick = 0;
     int i_err = 0;
     std::unique_ptr<IModel> m;
     {
@@ -137,17 +153,20 @@ void Worker::work()
             total_error += turn.error.slice().dot(turn.error);
         }
 
-        m->learn(m_learn_rate);
-
         //// now learn
 
         m_err[i_err] = total_error;
         i_err = (i_err + 1ULL) % std::size(m_err);
 
-        update_tick = (update_tick + 1) % 100;
-        if (update_tick == 0)
+        learn_tick++;
+        if (learn_tick >= 10000) learn_tick = 0;
+        if (learn_tick % 10 == 9) m->learn(m_learn_rate);
+        if (learn_tick % 1000 == 999) m->normalize(m_learn_rate);
+
+        update_tick++;
+        if (update_tick >= 100)
         {
-            m->normalize(m_learn_rate);
+            update_tick = 0;
             std::lock_guard<std::mutex> lk(m_mutex);
             if (m_replace_model)
             {
@@ -156,6 +175,7 @@ void Worker::work()
             }
             else
             {
+                m->increment_name();
                 delete m_model;
                 m_model = m->clone().release();
             }

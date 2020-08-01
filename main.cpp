@@ -11,6 +11,7 @@
 #include <FL/Fl_Box.H>
 #include <FL/Fl_Button.H>
 #include <FL/Fl_Check_Button.H>
+#include <FL/Fl_Choice.H>
 #include <FL/Fl_Counter.H>
 #include <FL/Fl_Double_Window.H>
 #include <FL/Fl_File_Chooser.H>
@@ -42,6 +43,9 @@
 using namespace rapidjson;
 
 std::vector<std::unique_ptr<Worker>> s_workers;
+struct MLStats_Group* s_mlgroup;
+struct Game_Group* s_gamegroup;
+struct Tournament_Group* s_tgroup;
 
 struct Graph : Fl_Widget
 {
@@ -94,7 +98,11 @@ struct MLStats_Group : Fl_Group
         m_learn_rate.step(0.00001, 0.0001);
         m_learn_rate.bounds(0.0, 0.01);
         m_learn_rate.value(s_workers[0]->m_learn_rate);
-
+        m_learn_rate.callback([](Fl_Widget* w, void* data) {
+            auto self = (Fl_Counter*)w;
+            s_workers[0]->m_learn_rate = self->value();
+        });
+        m_error_graph.valss.resize(1);
         this->resizable(&m_resize_box);
         this->end();
     }
@@ -109,6 +117,18 @@ struct MLStats_Group : Fl_Group
     {
         auto label = fmt::format("{}", i);
         m_trials.value(label.c_str());
+    }
+
+    void on_idle()
+    {
+        error_value(s_workers[0]->m_err[0]);
+        trials_value(s_workers[0]->m_trials.load());
+
+        m_error_graph.valss[0].clear();
+        std::copy(
+            std::begin(s_workers[0]->m_err), std::end(s_workers[0]->m_err), std::back_inserter(m_error_graph.valss[0]));
+        m_error_graph.damage(FL_DAMAGE_ALL);
+        m_error_graph.redraw();
     }
 
     Fl_Output m_err;
@@ -135,6 +155,8 @@ struct Turn_Viewer : Fl_Group
     Fl_Browser m_cur_turn;
 };
 
+const std::vector<std::shared_ptr<IModel>>& s_tgroup_models();
+
 struct Game_Group : Fl_Group
 {
     Game_Group(int x, int y, int w, int h, const char* label = 0)
@@ -144,6 +166,7 @@ struct Game_Group : Fl_Group
         , m_new_game(x + w - 80, y, 80, 20, "New Game")
         , m_ai_plays_p1(x, y, 50, 20, "AI P1")
         , m_ai_plays_p2(x + 52, y, 50, 20, "AI P2")
+        , m_ai_choice(x + 106, y, 100, 20)
         , m_resize_box(x + w / 2 - 20, y + 22 + 180 + 1, 40, (h - 22) / 2 - 180 - 17)
     {
         m_ai_plays_p1.value(1);
@@ -152,7 +175,11 @@ struct Game_Group : Fl_Group
         m_ai_plays_p2.callback([](Fl_Widget* w, void*) { ((Game_Group*)w->parent())->update_game(); });
         m_new_game.callback([](Fl_Widget* w, void*) {
             auto& self = *(Game_Group*)w->parent();
-            self.cur_model = s_workers[0]->clone_model();
+            if (-1 == self.m_ai_choice.value() || self.m_ai_choice.value() >= s_tgroup_models().size())
+                self.cur_model = s_workers[0]->clone_model();
+            else
+                self.cur_model = s_tgroup_models()[self.m_ai_choice.value()]->clone();
+
             self.g.init();
             self.turns.clear();
             self.m_gamelog.clear();
@@ -233,6 +260,7 @@ struct Game_Group : Fl_Group
     Fl_Button m_new_game;
     Fl_Check_Button m_ai_plays_p1;
     Fl_Check_Button m_ai_plays_p2;
+    Fl_Choice m_ai_choice;
     Fl_Box m_resize_box;
 
     Game g;
@@ -241,9 +269,6 @@ struct Game_Group : Fl_Group
 };
 
 void Turn_Viewer::on_player_action() { ((Game_Group*)parent())->on_player_action(); }
-
-MLStats_Group* s_mlgroup;
-Game_Group* s_gamegroup;
 
 void open_cb(Fl_Widget* w, void* v)
 {
@@ -340,6 +365,336 @@ void save_cb(Fl_Widget* w, void* v)
     }
 }
 
+template<class T, int pad_left, int pad_top, int pad_right = pad_left, int pad_bottom = pad_top>
+struct Margins : Fl_Group
+{
+    Margins(int x, int y, int w, int h, const char* label = 0)
+        : Fl_Group(x, y, w, h), m(x + pad_left, y + pad_top, w - pad_left - pad_right, h - pad_top - pad_bottom, label)
+    {
+        this->resizable(m);
+        this->end();
+    }
+
+    T& child() { return m; }
+
+    T m;
+};
+
+struct Models_List
+{
+    std::mutex m;
+    std::vector<std::shared_ptr<IModel>> models;
+} s_models_list;
+
+template<class Container, class F>
+void sync_browser(Fl_Browser& b, const Container& c, F transformer)
+{
+    bool changed = false;
+    if (b.size() != c.size())
+    {
+        b.clear();
+        for (auto&& x : c)
+            b.add(transformer(x).c_str());
+        changed = true;
+    }
+    else
+    {
+        for (size_t i = 0; i < c.size(); ++i)
+        {
+            std::string s = transformer(c[i]);
+            if (b.text((int)i) != s)
+            {
+                b.text((int)i, s.c_str());
+                changed = true;
+            }
+        }
+    }
+    if (changed)
+    {
+        b.damage(FL_DAMAGE_ALL);
+        b.redraw();
+    }
+}
+
+template<class T, void (T::*F)()>
+static void thunk0(Fl_Widget* w, void*)
+{
+    (((T*)w)->*F)();
+}
+
+template<class T, void (T::*F)()>
+static void thunk1(Fl_Widget* w, void*)
+{
+    (((T*)w->parent())->*F)();
+}
+
+template<class T, void (T::*F)()>
+static void thunkv(Fl_Widget*, void* w)
+{
+    (((T*)w)->*F)();
+}
+
+// template<class... Args>
+// struct Event
+//{
+//    template<class T, void (T::*F)(Args...)>
+//    void on(T* t)
+//    {
+//        m_observers.emplace_back(t, [](void* v, Args... args) { (((T*)v)->*F)(static_cast<Args&&>(args)...); });
+//    }
+//
+//    void fire(Args&&... args)
+//    {
+//        for (auto p : m_observers)
+//            p.second(p.first, args...);
+//    }
+//
+// private:
+//    std::vector<std::pair<void*, void (*)(void*, Args...)>> m_observers;
+//};
+
+template<class T>
+struct LockGuarded;
+
+template<class T>
+struct UniqueLocked
+{
+    constexpr UniqueLocked() : t(nullptr) { }
+    constexpr UniqueLocked(UniqueLocked&& u) : t(u.t) { u.t = nullptr; }
+    constexpr UniqueLocked& operator=(UniqueLocked&& u)
+    {
+        clear();
+        t = u.t;
+        u.t = nullptr;
+    }
+    ~UniqueLocked()
+    {
+        if (t) t->m.unlock();
+    }
+
+    T& operator*() { return t->t; }
+    T* operator->() { return &t->t; }
+
+    void clear()
+    {
+        if (t)
+        {
+            t->m.unlock();
+            t = nullptr;
+        }
+    }
+
+    friend struct LockGuarded<T>;
+
+private:
+    UniqueLocked(LockGuarded<T>* t) : t(t) { }
+    LockGuarded<T>* t;
+};
+
+template<class T>
+struct LockGuard
+{
+    LockGuard(LockGuarded<T>& t) : t(&t) { t.m.lock(); }
+    LockGuard(const LockGuard&) = delete;
+    LockGuard(LockGuard&&) = delete;
+    LockGuard& operator=(const LockGuard&) = delete;
+    LockGuard& operator=(LockGuard&&) = delete;
+    ~LockGuard() { t->m.unlock(); }
+
+    T& operator*() { return t->t; }
+    T* operator->() { return &t->t; }
+
+    friend struct LockGuarded<T>;
+
+private:
+    LockGuarded<T>* t;
+};
+
+template<class T>
+struct LockGuarded
+{
+    UniqueLocked<T> lock()
+    {
+        m.lock();
+        return this;
+    }
+
+    friend struct UniqueLocked<T>;
+    friend struct LockGuard<T>;
+
+    using Guard = LockGuard<T>;
+
+private:
+    std::mutex m;
+    T t;
+};
+
+LockGuarded<std::vector<std::shared_ptr<IModel>>> s_tourny_list;
+
+struct Manager_Window : Fl_Double_Window
+{
+    struct Workers_Browser : Fl_Group
+    {
+        Workers_Browser(int x, int y, int w, int h, const char* label = 0)
+            : Fl_Group(x, y, w, h, label)
+            , m_freeze(x, y, w / 2, 26, "Freeze")
+            , m_thaw(x + w / 2, y, w / 2, 26, "Thaw")
+            , m_browser(x, y + 26, w, h - 26 - 15, "Workers")
+        {
+            update();
+            this->resizable(m_browser);
+            this->end();
+        }
+
+        void update()
+        {
+            sync_browser(this->m_browser, s_workers, [](const std::unique_ptr<Worker>& p) { return p->model_name(); });
+        }
+
+        Fl_Button m_freeze, m_thaw;
+        Fl_Hold_Browser m_browser;
+    };
+    struct Tournament_Browser : Fl_Group
+    {
+        Tournament_Browser(int x, int y, int w, int h, const char* label = 0)
+            : Fl_Group(x, y, w, h, label)
+            , m_add(x, y, w / 2, 26, "Add")
+            , m_remove(x + w / 2, y, w / 2, 26, "Remove")
+            , m_browser(x, y + 26, w, h - 26 - 15, "Tournament")
+        {
+            this->resizable(m_browser);
+            this->end();
+        }
+
+        Fl_Button m_add, m_remove;
+        Fl_Multi_Browser m_browser;
+    };
+
+    void cb_Freeze()
+    {
+        int line = m_workers.child().m_browser.value();
+        if (line > s_workers.size()) return;
+        auto& b = m_models.child();
+
+        std::lock_guard<std::mutex> lk(s_models_list.m);
+        if (line == 0)
+        {
+            for (auto&& w : s_workers)
+            {
+                s_models_list.models.push_back(w->clone_model());
+                b.add(s_models_list.models.back()->name().c_str());
+            }
+        }
+        else
+        {
+            s_models_list.models.push_back(s_workers[line - 1]->clone_model());
+            b.add(s_models_list.models.back()->name().c_str());
+        }
+        b.damage(FL_DAMAGE_ALL);
+        b.redraw();
+    }
+    void cb_Thaw()
+    {
+        int w_line = m_workers.child().m_browser.value();
+        if (w_line == 0 || m_workers.child().m_browser.size() != s_workers.size()) return;
+
+        auto& b = m_models.child();
+        int b_line = b.value();
+        if (b_line == 0) return;
+
+        std::shared_ptr<IModel> m;
+        {
+            std::lock_guard<std::mutex> lk(s_models_list.m);
+            if (b.size() != s_models_list.models.size()) return;
+            m = s_models_list.models[b_line - 1];
+        }
+        s_workers[w_line - 1]->replace_model(m->clone());
+        m_workers.child().m_browser.text(w_line, m->name().c_str());
+        m_workers.child().m_browser.damage(FL_DAMAGE_ALL);
+        m_workers.child().m_browser.redraw();
+    }
+    void cb_New() { }
+    void cb_Open() { }
+    void cb_Save() { }
+    void cb_Rename() { }
+    void cb_Delete()
+    {
+        auto& b = m_models.child();
+        std::lock_guard lk(s_models_list.m);
+        if (b.size() != s_models_list.models.size()) return;
+        for (int i = 0; i < b.size();)
+        {
+            if (b.selected(i + 1))
+            {
+                s_models_list.models.erase(s_models_list.models.begin() + i);
+                b.remove(i + 1);
+            }
+            else
+            {
+                ++i;
+            }
+        }
+        b.damage(FL_DAMAGE_ALL);
+        b.redraw();
+    }
+    void cb_TAdd()
+    {
+        auto& b = m_models.child();
+        std::lock_guard lk(s_models_list.m);
+        if (s_models_list.models.size() != b.size()) return;
+        LockGuard tourny_list(s_tourny_list);
+        for (int i = 0; i < b.size(); ++i)
+        {
+            if (b.selected(i + 1))
+            {
+                tourny_list->push_back(s_models_list.models[i]);
+            }
+        }
+    }
+    void cb_TRemove() { }
+
+    Manager_Window(int w, int h, const char* name = "Manager")
+        : Fl_Double_Window(w, h, name)
+        , m_menu_bar(0, 0, w, 30)
+        , m_models(0, 0, w / 2, h, "Models")
+        , m_workers(w / 2, 0, w / 2, h / 2)
+        , m_tourny(w / 2, h / 2, w / 2, h / 2)
+    {
+        m_menu_bar.menu(s_menu_items);
+        {
+            std::lock_guard<std::mutex> lk(s_models_list.m);
+            update();
+        }
+        m_workers.child().m_freeze.callback((Fl_Callback*)::thunkv<Manager_Window, &Manager_Window::cb_Freeze>, this);
+        m_workers.child().m_thaw.callback((Fl_Callback*)::thunkv<Manager_Window, &Manager_Window::cb_Thaw>, this);
+        m_tourny.child().m_add.callback((Fl_Callback*)::thunkv<Manager_Window, &Manager_Window::cb_TAdd>, this);
+        m_tourny.child().m_remove.callback((Fl_Callback*)::thunkv<Manager_Window, &Manager_Window::cb_TRemove>, this);
+        this->resizable(this);
+        this->end();
+    }
+
+    void update()
+    {
+        sync_browser(
+            m_models.child(), s_models_list.models, [](const std::shared_ptr<IModel>& model) { return model->name(); });
+    }
+
+    Fl_Menu_Bar m_menu_bar;
+    Margins<Fl_Multi_Browser, 10, 35, 5, 25> m_models;
+    Margins<Workers_Browser, 5, 35, 10, 5> m_workers;
+    Margins<Tournament_Browser, 5, 5, 10, 10> m_tourny;
+
+    static inline const Fl_Menu_Item s_menu_items[] = {
+        {"&File", 0, 0, 0, 64, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
+        {"&New Model", 0x4006e, thunk1<Manager_Window, &cb_New>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
+        {"&Open", 0x4006f, thunk1<Manager_Window, &cb_Open>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
+        {"&Save", 0x40073, thunk1<Manager_Window, &cb_Save>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
+        {"&Rename", 0xffbf, thunk1<Manager_Window, &cb_Rename>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
+        {"&Delete", 0xffff, thunk1<Manager_Window, &cb_Delete>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
+        {0, 0, 0, 0, 0, 0, 0, 0, 0},
+        {0, 0, 0, 0, 0, 0, 0, 0, 0}};
+};
+
 struct Tournament_Group : Fl_Group
 {
     Tournament_Group(int x, int y, int w, int h, const char* label = 0)
@@ -362,13 +717,52 @@ struct Tournament_Group : Fl_Group
         std::lock_guard<std::mutex> lk(m);
         updated = false;
         restart = true;
-        data.clear();
-        temp_models.clear();
-        for (auto&& w : s_workers)
-            temp_models.push_back(w->clone_model());
+        static const size_t target_tournament = 10; // must be larger than s_workers.size()
+        auto new_size = std::min(target_tournament, s_workers.size() + models.size());
 
-        num_models = temp_models.size();
-        data.resize(num_models * num_models);
+        int active = s_gamegroup->m_ai_choice.value();
+        auto active_p = active < 0 || active >= models.size() ? nullptr : models[active].get();
+        if (target_tournament < s_workers.size() + models.size())
+        {
+            auto wrs = winrates(data);
+            std::sort(wrs.begin(), wrs.end());
+            auto num_to_erase = s_workers.size() + models.size() - target_tournament;
+            std::vector<bool> to_erase(models.size(), false);
+            for (int i = 0; i < num_to_erase; ++i)
+                to_erase[wrs[i].second] = true;
+            erase_ns(data, to_erase);
+            erase_ns(models, to_erase);
+            for (auto&& x : data)
+                erase_ns(x, to_erase);
+        }
+
+        for (auto&& x : data)
+            x.resize(new_size);
+        for (size_t i = data.size(); i < new_size; ++i)
+            data.emplace_back(new_size);
+        for (auto&& w : s_workers)
+            models.push_back(w->clone_model());
+
+        num_models = models.size();
+        model_names.resize(models.size());
+        for (int i = 0; i < models.size(); ++i)
+        {
+            model_names[i] = models[i]->name();
+        }
+
+        s_gamegroup->m_ai_choice.clear();
+        for (auto&& n : model_names)
+            s_gamegroup->m_ai_choice.add(n.c_str());
+        for (int i = 0; i < models.size(); ++i)
+        {
+            if (models[i].get() == active_p)
+            {
+                s_gamegroup->m_ai_choice.value(i);
+                break;
+            }
+        }
+        s_gamegroup->m_ai_choice.damage(FL_DAMAGE_ALL);
+        s_gamegroup->m_ai_choice.redraw();
 
         if (!th.joinable())
         {
@@ -376,11 +770,54 @@ struct Tournament_Group : Fl_Group
         }
     }
 
+    template<class T>
+    static void erase_ns(std::vector<T>& v, const std::vector<bool>& to_erase)
+    {
+        int i = 0;
+        size_t e = v.size();
+        for (;; ++i)
+        {
+            if (i == e) return;
+            if (to_erase[i]) break;
+        }
+
+        int j = i + 1;
+        for (; j < e; ++j)
+        {
+            if (!to_erase[j]) v[i++] = std::move(v[j]);
+        }
+        v.erase(v.begin() + i, v.end());
+    }
+
+    static std::vector<std::pair<double, int>> winrates(const std::vector<std::vector<std::pair<int, int>>>& stats)
+    {
+        std::vector<std::pair<double, int>> ret;
+        auto num_models = stats.size();
+        for (int i = 0; i < num_models; ++i)
+        {
+            double winpct = 0;
+            for (int j = 0; j < num_models; ++j)
+            {
+                if (j == i) continue;
+                const auto& d = stats[i][j];
+                if (d.first + d.second == 0) continue;
+                winpct += 100.0 * d.first / (d.first + d.second);
+
+                const auto& d2 = stats[j][i];
+                if (d2.first + d2.second == 0) continue;
+                winpct += 100.0 * d2.second / (d2.first + d2.second);
+            }
+            ret.emplace_back(winpct / 2 / (num_models - 1), i);
+        }
+        return ret;
+    }
+
     void work()
     {
-        std::vector<std::pair<int, int>> local_data;
-        std::vector<std::unique_ptr<IModel>> local_models;
+        std::vector<std::vector<std::pair<int, int>>> local_data;
+        std::vector<std::shared_ptr<IModel>> local_models;
         int i = 0;
+        int j = 0;
         while (!exit_worker)
         {
             if (restart || !updated)
@@ -389,7 +826,7 @@ struct Tournament_Group : Fl_Group
                 if (restart)
                 {
                     local_data = data;
-                    local_models = std::move(temp_models);
+                    local_models = models;
                     restart = false;
                 }
                 else if (!updated)
@@ -399,21 +836,29 @@ struct Tournament_Group : Fl_Group
                 }
             }
             i++;
-            if (i >= local_data.size()) i = 0;
-
-            auto [x, y] = run_100(*local_models[i % local_models.size()], *local_models[i / local_models.size()]);
-            local_data[i].first += x;
-            local_data[i].second += y;
+            if (i >= local_data.size())
+            {
+                i = 0;
+                j++;
+            }
+            if (j >= local_data.size())
+            {
+                j = 0;
+            }
+            auto [x, y] = run_100(*local_models[i], *local_models[j]);
+            local_data[i][j].first += x;
+            local_data[i][j].second += y;
         }
     }
 
     std::atomic<bool> updated = false;
     std::atomic<bool> restart = false;
     std::atomic<bool> exit_worker = false;
+    std::vector<std::string> model_names;
     std::mutex m;
-    std::vector<std::pair<int, int>> data;
+    std::vector<std::vector<std::pair<int, int>>> data;
     size_t num_models = 0;
-    std::vector<std::unique_ptr<IModel>> temp_models;
+    std::vector<std::shared_ptr<IModel>> models;
     std::thread th;
 
     void on_idle()
@@ -422,38 +867,29 @@ struct Tournament_Group : Fl_Group
         std::lock_guard<std::mutex> lk(m);
         updated = false;
         m_browser.clear();
+        static int widths[] = {150, 100, 0};
+        m_browser.column_widths(widths);
+        m_browser.column_char('\t');
         m_browser.add("Tournament Results:");
+        for (auto&& wr : winrates(data))
+        {
+            m_browser.add(fmt::format("{} overall:\t{}%", model_names[wr.second], wr.first).c_str());
+        }
+        m_browser.add("");
+
         for (int i = 0; i < num_models; ++i)
         {
             for (int j = 0; j < num_models; ++j)
             {
-                const auto& d = data[i + j * num_models];
+                const auto& d = data[i][j];
                 if (d.first + d.second > 0)
-                    m_browser.add(fmt::format("m{} vs m{}: {} vs {}: {}%",
-                                              i,
-                                              j,
+                    m_browser.add(fmt::format("{} vs {}:\t{} vs {}:\t{}%",
+                                              model_names[i],
+                                              model_names[j],
                                               d.first,
                                               d.second,
                                               100.0 * d.first / (d.first + d.second))
                                       .c_str());
-            }
-        }
-        m_browser.add("");
-        if (num_models > 1)
-        {
-            for (int i = 0; i < num_models; ++i)
-            {
-                double winpct = 0;
-                for (int j = 0; j < num_models; ++j)
-                {
-                    if (j == i) continue;
-                    const auto& d = data[i + j * num_models];
-                    winpct += 100.0 * d.first / (d.first + d.second);
-
-                    const auto& d2 = data[j + i * num_models];
-                    winpct += 100.0 * d2.second / (d2.first + d2.second);
-                }
-                m_browser.add(fmt::format("m{} overall: {}%", i, winpct / 2 / (num_models - 1)).c_str());
             }
         }
 
@@ -507,7 +943,7 @@ struct Tournament_Group : Fl_Group
     Fl_Browser m_browser;
 };
 
-Tournament_Group* s_tgroup;
+const std::vector<std::shared_ptr<IModel>>& s_tgroup_models() { return s_tgroup->models; }
 
 int main(int argc, char* argv[])
 {
@@ -517,13 +953,11 @@ int main(int argc, char* argv[])
     s_workers.push_back(std::make_unique<Worker>());
     s_workers.push_back(std::make_unique<Worker>());
     s_workers.push_back(std::make_unique<Worker>());
-    s_workers.push_back(std::make_unique<Worker>());
-    s_workers[0]->replace_model(make_model(default_model_dims()));
-    s_workers[1]->replace_model(make_model(default_model_dims()));
-    s_workers[2]->replace_model(make_model(medium_model_dims()));
-    s_workers[3]->replace_model(make_model(medium_model_dims()));
-    s_workers[4]->replace_model(make_model(small_model_dims()));
-    s_workers[5]->replace_model(make_model(small_model_dims()));
+    s_workers[0]->replace_model(make_model(default_model_dims(), "bgA"));
+    s_workers[1]->replace_model(make_model(default_model_dims(), "bgB"));
+    s_workers[2]->replace_model(make_model(medium_model_dims(), "llA"));
+    s_workers[3]->replace_model(make_model(medium_model_dims(), "llB"));
+    s_workers[4]->replace_model(make_model(small_model_dims(), "sml"));
 
     auto win = std::make_unique<Fl_Double_Window>(490, 400, "MLCard");
     win->begin();
@@ -531,25 +965,6 @@ int main(int argc, char* argv[])
     menu_bar.add("&File/&Open", "^o", &open_cb);
     menu_bar.add("&File/&Save", "^s", &save_cb);
     s_mlgroup = new MLStats_Group(10, 40, win->w() - 20, win->h() - 50);
-    s_mlgroup->m_learn_rate.value(s_workers[0]->m_learn_rate);
-    s_mlgroup->m_learn_rate.callback([](Fl_Widget* w, void* data) {
-        auto self = (Fl_Counter*)w;
-        s_workers[0]->m_learn_rate = self->value();
-    });
-    s_mlgroup->m_error_graph.valss.resize(1);
-    Fl::add_idle([](void* v) {
-        s_mlgroup->error_value(s_workers[0]->m_err[0]);
-        s_mlgroup->trials_value(s_workers[0]->m_trials.load());
-
-        s_mlgroup->m_error_graph.valss[0].clear();
-        std::copy(std::begin(s_workers[0]->m_err),
-                  std::end(s_workers[0]->m_err),
-                  std::back_inserter(s_mlgroup->m_error_graph.valss[0]));
-        s_mlgroup->m_error_graph.damage(FL_DAMAGE_ALL);
-        s_mlgroup->m_error_graph.redraw();
-
-        s_tgroup->on_idle();
-    });
     win->end();
     win->resizable(new Fl_Box(10, 10, win->w() - 20, win->h() - 20));
     win->show(argc, argv);
@@ -581,6 +996,13 @@ int main(int argc, char* argv[])
     win3->end();
     win3->resizable(new Fl_Box(10, 10, win3->w() - 20, win3->h() - 20));
     win3->show();
+
+    (new Manager_Window(600, 700))->show();
+
+    Fl::add_idle([](void* v) {
+        s_mlgroup->on_idle();
+        s_tgroup->on_idle();
+    });
 
     for (auto&& w : s_workers)
         w->start();

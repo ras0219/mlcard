@@ -428,6 +428,8 @@ struct PerCardOutputModel
 
 struct Model final : IModel
 {
+    Model(std::string&& s, int i) : IModel(std::move(s), i) { }
+
     ReLULayers b;
     ReLULayers l;
     Layer p;
@@ -637,6 +639,8 @@ struct Model final : IModel
         w.StartObject();
         w.Key("type");
         w.String("Model");
+        w.Key("name");
+        w.String(name().c_str());
         w.Key("b");
         b.serialize(w);
         w.Key("l");
@@ -666,9 +670,9 @@ struct Model final : IModel
     virtual std::unique_ptr<IModel> clone() const { return std::make_unique<Model>(*this); }
 };
 
-std::unique_ptr<IModel> make_model(const ModelDims& dims)
+std::unique_ptr<IModel> make_model(const ModelDims& dims, const std::string& s)
 {
-    auto m = std::make_unique<Model>();
+    auto m = std::make_unique<Model>(std::string(s), 0);
     m->randomize(Encoded::board_size, Encoded::card_size, dims);
     return m;
 }
@@ -677,46 +681,46 @@ std::unique_ptr<IModel> load_model(const std::string& s)
 {
     rapidjson::Document doc;
     doc.Parse(s.c_str(), s.size());
-    auto m = std::make_unique<Model>();
+    auto m = std::make_unique<Model>(doc.FindMember("name")->value.GetString(), doc.FindMember("id")->value.GetInt());
     m->deserialize(doc);
     return m;
 }
 
 const ModelDims& default_model_dims()
 {
-    static ModelDims md{{
-                            {"b", ModelDims{{}, {20, 20, 20}}},
-                            {"l", ModelDims{{}, {20, 20, 20}}},
-                            {"card_in", ModelDims{{}, {20, 20, 20}}},
-                            {"you_card_in", ModelDims{{}, {20, 20, 20}}},
-                            {"card_out", ModelDims{{}, {20, 20, 20}}},
-                        },
-                        {}};
+    static ModelDims md{{},
+                        {
+                            {"b", ModelDims({30, 30})},
+                            {"l", ModelDims{{50, 40, 30, 30}}},
+                            {"card_in", ModelDims{{20, 20}}},
+                            {"you_card_in", ModelDims{{20, 20}}},
+                            {"card_out", ModelDims{{20, 20}}},
+                        }};
     return md;
 }
 
 const ModelDims& medium_model_dims()
 {
-    static ModelDims md{{
-                            {"b", ModelDims{{}, {10, 10}}},
-                            {"l", ModelDims{{}, {10, 10}}},
-                            {"card_in", ModelDims{{}, {10, 10}}},
-                            {"you_card_in", ModelDims{{}, {10, 10}}},
-                            {"card_out", ModelDims{{}, {10, 10}}},
-                        },
-                        {}};
+    static ModelDims md{{},
+                        {
+                            {"b", ModelDims{{30, 30}}},
+                            {"l", ModelDims{{30, 30, 30, 30}}},
+                            {"card_in", ModelDims{{20, 20}}},
+                            {"you_card_in", ModelDims{{20, 20}}},
+                            {"card_out", ModelDims{{20, 20}}},
+                        }};
     return md;
 }
 
 const ModelDims& small_model_dims()
 {
-    static ModelDims md{{
-                            {"b", ModelDims{{}, {6}}},
-                            {"l", ModelDims{{}, {6}}},
-                            {"card_in", ModelDims{{}, {6}}},
-                            {"you_card_in", ModelDims{{}, {6}}},
-                            {"card_out", ModelDims{{}, {6}}},
-                        },
-                        {}};
+    static ModelDims md{{},
+                        {
+                            {"b", ModelDims{{6}}},
+                            {"l", ModelDims{{6}}},
+                            {"card_in", ModelDims{{6}}},
+                            {"you_card_in", ModelDims{{6}}},
+                            {"card_out", ModelDims{{6}}},
+                        }};
     return md;
 }

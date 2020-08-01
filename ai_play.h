@@ -15,4 +15,5 @@ struct Turn
     vec error, error_full;
 
     void take_ai_action() { chosen_action = eval->best_action(); }
+    void take_full_ai_action() { chosen_action = eval_full->best_action(); }
 };
