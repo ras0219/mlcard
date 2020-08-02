@@ -18,7 +18,6 @@ struct APIModel
     std::shared_ptr<IModel> m;
 };
 
-API void init() { srand((unsigned int)time(NULL)); }
 API APIGame* alloc_game()
 {
     auto r = std::make_unique<APIGame>();
@@ -42,6 +41,18 @@ API const char* serialize_game(APIGame* g)
     RJWriter w(g->s);
     g->g.serialize(w);
     return g->s.GetString();
+}
+API bool deserialize_game(APIGame* g, const char* text)
+{
+    try
+    {
+        g->g.deserialize(text);
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
 }
 
 API void take_action(APIGame* g, int action) { g->g.advance(action); }
