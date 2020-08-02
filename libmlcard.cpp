@@ -55,6 +55,8 @@ API bool deserialize_game(APIGame* g, const char* text)
     }
 }
 
+API const char* game_help_html(const char* page) { return Game::help_html(page); }
+
 API void take_action(APIGame* g, int action) { g->g.advance(action); }
 
 API int ai_take_action(APIGame* g, APIModel* m)
