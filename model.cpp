@@ -74,16 +74,11 @@ struct Layer
     void calc(vec_slice input, vec_slice out)
     {
         auto c = coefs();
-        auto r_init = c.row(m_input - 1);
+        auto r_init = c.last_row();
 
         for (size_t j = 0; j < m_output; ++j)
         {
-            float acc = r_init[j];
-            for (size_t i = 0; i < m_input - 1; ++i)
-            {
-                acc += coefs().row(i)[j] * input[i];
-            }
-            out[j] = acc;
+            out[j] = r_init[j] + c.col(j).dot(input);
         }
 
         out.slice(0, m_min_io).add(input.slice(0, m_min_io));

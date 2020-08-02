@@ -20,31 +20,24 @@
 
 struct mat_slice;
 
-struct vec_slice
+#define VEC_EOP(RHS)                                                                                                   \
+    for (size_t i = 0; i < this->size(); ++i)                                                                          \
+        (*this)[i] RHS;                                                                                                \
+    return self()
+
+struct vec_slice_base
 {
-    constexpr vec_slice() = default;
-    constexpr vec_slice(float* data, size_t len) : m_data(data), m_len(len) { }
+    constexpr vec_slice_base() = default;
+    constexpr vec_slice_base(float* data, size_t len) : m_data(data), m_len(len) { }
     template<size_t Sz>
-    constexpr vec_slice(float (&data)[Sz]) : m_data(data), m_len(Sz)
+    constexpr vec_slice_base(float (&data)[Sz]) : m_data(data), m_len(Sz)
     {
     }
-    vec_slice(std::valarray<float>& v) : m_data(&v[0]), m_len(v.size()) { }
+    vec_slice_base(std::valarray<float>& v) : m_data(&v[0]), m_len(v.size()) { }
 
-    constexpr float* data() { return m_data; }
     constexpr size_t size() const { return m_len; }
 
-    float dot(vec_slice o) const
-    {
-        VEC_CHECK_BOUNDS(o);
-        float sum = 0.0;
-        for (size_t i = 0; i < m_len; ++i)
-        {
-            sum += m_data[i] * o.m_data[i];
-        }
-        return sum;
-    }
-
-    float& operator[](size_t i)
+    float& operator[](size_t i) const
     {
 #if !defined(NDEBUG) || defined(VEC_ENABLE_CHECKS)
         if (i >= m_len) std::terminate();
@@ -52,6 +45,159 @@ struct vec_slice
         return m_data[i];
     }
 
+protected:
+    float* m_data = nullptr;
+    size_t m_len = 0;
+};
+
+struct vec_stride_slice_base
+{
+    constexpr vec_stride_slice_base() = default;
+    constexpr vec_stride_slice_base(float* data, ptrdiff_t stride, size_t len)
+        : m_data(data), m_stride(stride), m_len(len)
+    {
+    }
+
+    constexpr size_t size() const { return m_len; }
+
+    float& operator[](size_t i) const
+    {
+#if !defined(NDEBUG) || defined(VEC_ENABLE_CHECKS)
+        if (i >= m_len) std::terminate();
+#endif
+        return m_data[i];
+    }
+
+protected:
+    float* m_data = nullptr;
+    ptrdiff_t m_stride = 0;
+    size_t m_len = 0;
+};
+
+struct vec_stride_slice_base;
+
+template<class Derived, class Base>
+struct vec_ops_mixin : Base
+{
+    using Base::Base;
+
+    template<class V>
+    float dot(V o) const
+    {
+        VEC_CHECK_BOUNDS(o);
+        float sum = 0.0;
+        for (size_t i = 0; i < this->size(); ++i)
+        {
+            sum += (*this)[i] * o[i];
+        }
+        return sum;
+    }
+
+    Derived& assign(vec_slice_base o)
+    {
+        VEC_CHECK_BOUNDS(o);
+        VEC_EOP(= o[i]);
+    }
+    Derived& assign(float d) { VEC_EOP(= d); }
+
+    Derived& assign_mult(vec_slice_base a, vec_slice_base b)
+    {
+        VEC_CHECK_BOUNDS(a);
+        VEC_CHECK_BOUNDS(b);
+        VEC_EOP(= a[i] * b[i]);
+    }
+    Derived& assign_mult(vec_slice_base a, float b)
+    {
+        VEC_CHECK_BOUNDS(a);
+        VEC_EOP(= a[i] * b);
+    }
+
+    Derived& assign_add(vec_slice_base a, vec_slice_base b)
+    {
+        VEC_CHECK_BOUNDS(a);
+        VEC_CHECK_BOUNDS(b);
+        VEC_EOP(= a[i] + b[i]);
+    }
+    Derived& assign_add(vec_slice_base a, float b)
+    {
+        VEC_CHECK_BOUNDS(a);
+        VEC_EOP(= a[i] + b);
+    }
+
+    Derived& assign_sub(vec_slice_base a, vec_slice_base b)
+    {
+        VEC_CHECK_BOUNDS(a);
+        VEC_CHECK_BOUNDS(b);
+        VEC_EOP(= a[i] - b[i]);
+    }
+    Derived& assign_sub(float a, vec_slice_base b)
+    {
+        VEC_CHECK_BOUNDS(b);
+        VEC_EOP(= a - b[i]);
+    }
+
+    Derived& fma(vec_slice_base a, vec_slice_base b)
+    {
+        VEC_CHECK_BOUNDS(a);
+        VEC_CHECK_BOUNDS(b);
+        VEC_EOP(+= a[i] * b[i]);
+    }
+    Derived& fma(vec_slice_base a, float b)
+    {
+        VEC_CHECK_BOUNDS(a);
+        VEC_EOP(+= a[i] * b);
+    }
+
+    Derived& add(vec_slice_base a)
+    {
+        VEC_CHECK_BOUNDS(a);
+        VEC_EOP(+= a[i]);
+    }
+
+    Derived& mult(float a) { VEC_EOP(*= a); }
+
+    float max(float init) const
+    {
+        for (size_t i = 0; i < this->size(); ++i)
+        {
+            if ((*this)[i] > init) init = (*this)[i];
+        }
+        return init;
+    }
+
+    float min(float init) const
+    {
+        for (size_t i = 0; i < this->size(); ++i)
+        {
+            if ((*this)[i] < init) init = (*this)[i];
+        }
+        return init;
+    }
+
+    // ratio is multiplied by x
+    Derived& decay_average(vec_slice_base x, float ratio)
+    {
+        VEC_CHECK_BOUNDS(x);
+        VEC_EOP(= (*this)[i] * (1 - ratio) + x[i] * ratio);
+    }
+
+    // ratio is multiplied by x
+    Derived& decay_variance(vec_slice_base x, float ratio)
+    {
+        VEC_CHECK_BOUNDS(x);
+        VEC_EOP(= (*this)[i] * (1 - ratio) + x[i] * x[i] * ratio);
+    }
+
+private:
+    Derived& self() { return static_cast<Derived&>(*this); }
+    const Derived& self() const { return static_cast<const Derived&>(*this); }
+};
+
+struct vec_slice : vec_ops_mixin<vec_slice, vec_slice_base>
+{
+    using vec_ops_mixin::vec_ops_mixin;
+
+    constexpr float* data() const { return m_data; }
     float* begin() { return m_data; }
     float* end() { return m_data + m_len; }
 
@@ -67,123 +213,38 @@ struct vec_slice
     {
         return {{m_data, m_len - offset}, {m_data + m_len - offset, offset}};
     }
+};
 
-#define VEC_EOP(RHS)                                                                                                   \
-    for (size_t i = 0; i < m_len; ++i)                                                                                 \
-        m_data[i] RHS;                                                                                                 \
-    return *this
+struct vec_stride_slice : vec_ops_mixin<vec_slice, vec_stride_slice_base>
+{
+    using vec_ops_mixin::vec_ops_mixin;
 
-    vec_slice& assign(vec_slice o)
-    {
-        VEC_CHECK_BOUNDS(o);
-        VEC_EOP(= o.m_data[i]);
-    }
-    vec_slice& assign(float d) { VEC_EOP(= d); }
+    constexpr float* data() const { return m_data; }
 
-    vec_slice& assign_mult(vec_slice a, vec_slice b)
+    vec_stride_slice slice() { return *this; }
+    vec_stride_slice slice(size_t offset) { return {m_data + m_stride * offset, m_stride, m_len - offset}; }
+    vec_stride_slice slice(size_t offset, size_t len) { return {m_data + m_stride * offset, m_stride, len}; }
+    vec_stride_slice rslice(size_t offset, size_t len) { return {m_data + m_stride * (m_len - offset), m_stride, len}; }
+    std::pair<vec_stride_slice, vec_stride_slice> split(size_t offset)
     {
-        VEC_CHECK_BOUNDS(a);
-        VEC_CHECK_BOUNDS(b);
-        VEC_EOP(= a.m_data[i] * b.m_data[i]);
+        return {{m_data, m_stride, offset}, {m_data + m_stride * offset, m_stride, m_len - offset}};
     }
-    vec_slice& assign_mult(vec_slice a, float b)
+    std::pair<vec_stride_slice, vec_stride_slice> rsplit(size_t offset)
     {
-        VEC_CHECK_BOUNDS(a);
-        VEC_EOP(= a.m_data[i] * b);
+        return {{m_data, m_stride, m_len - offset}, {m_data + m_stride * (m_len - offset), m_stride, offset}};
     }
-
-    vec_slice& assign_add(vec_slice a, vec_slice b)
-    {
-        VEC_CHECK_BOUNDS(a);
-        VEC_CHECK_BOUNDS(b);
-        VEC_EOP(= a.m_data[i] + b.m_data[i]);
-    }
-    vec_slice& assign_add(vec_slice a, float b)
-    {
-        VEC_CHECK_BOUNDS(a);
-        VEC_EOP(= a.m_data[i] + b);
-    }
-
-    vec_slice& assign_sub(vec_slice a, vec_slice b)
-    {
-        VEC_CHECK_BOUNDS(a);
-        VEC_CHECK_BOUNDS(b);
-        VEC_EOP(= a.m_data[i] - b.m_data[i]);
-    }
-    vec_slice& assign_sub(float a, vec_slice b)
-    {
-        VEC_CHECK_BOUNDS(b);
-        VEC_EOP(= a - b.m_data[i]);
-    }
-
-    vec_slice& fma(vec_slice a, vec_slice b)
-    {
-        VEC_CHECK_BOUNDS(a);
-        VEC_CHECK_BOUNDS(b);
-        VEC_EOP(+= a.m_data[i] * b.m_data[i]);
-    }
-    vec_slice& fma(vec_slice a, float b)
-    {
-        VEC_CHECK_BOUNDS(a);
-        VEC_EOP(+= a.m_data[i] * b);
-    }
-
-    vec_slice& add(vec_slice a)
-    {
-        VEC_CHECK_BOUNDS(a);
-        VEC_EOP(+= a.m_data[i]);
-    }
-
-    vec_slice& mult(float a) { VEC_EOP(*= a); }
-
-    float max(float init) const
-    {
-        for (size_t i = 0; i < m_len; ++i)
-        {
-            if (m_data[i] > init) init = m_data[i];
-        }
-        return init;
-    }
-
-    float min(float init) const
-    {
-        for (size_t i = 0; i < m_len; ++i)
-        {
-            if (m_data[i] < init) init = m_data[i];
-        }
-        return init;
-    }
-
-    // ratio is multiplied by x
-    vec_slice& decay_average(vec_slice x, float ratio)
-    {
-        VEC_CHECK_BOUNDS(x);
-        VEC_EOP(= m_data[i] * (1 - ratio) + x.m_data[i] * ratio);
-    }
-
-    // ratio is multiplied by x
-    vec_slice& decay_variance(vec_slice x, float ratio)
-    {
-        VEC_CHECK_BOUNDS(x);
-        VEC_EOP(= m_data[i] * (1 - ratio) + x.m_data[i] * x.m_data[i] * ratio);
-    }
+};
 
 #undef VEC_EOP
-
-private:
-    float* m_data = nullptr;
-    size_t m_len = 0;
-};
 
 struct mat_slice
 {
     constexpr mat_slice() = default;
     constexpr mat_slice(float* data, size_t rows, size_t cols) : m_data(data), m_rows(rows), m_cols(cols) { }
-    constexpr mat_slice(vec_slice data, size_t stride)
-        : m_data(data.data()), m_rows(data.size() / stride), m_cols(stride)
+    constexpr mat_slice(vec_slice data, size_t cols) : m_data(data.data()), m_rows(data.size() / cols), m_cols(cols)
     {
 #if !defined(NDEBUG) || defined(VEC_ENABLE_CHECKS)
-        if (data.size() % stride != 0) std::terminate();
+        if (data.size() % cols != 0) std::terminate();
 #endif
     }
 
@@ -192,12 +253,20 @@ struct mat_slice
     size_t rows() const { return m_rows; }
     size_t cols() const { return m_cols; }
 
-    vec_slice row(size_t i)
+    vec_slice row(size_t i) const
     {
 #if !defined(NDEBUG) || defined(VEC_ENABLE_CHECKS)
         if (i >= m_rows) std::terminate();
 #endif
         return vec_slice(m_data + i * m_cols, m_cols);
+    }
+
+    vec_stride_slice col(size_t i) const
+    {
+#if !defined(NDEBUG) || defined(VEC_ENABLE_CHECKS)
+        if (i >= m_cols) std::terminate();
+#endif
+        return vec_stride_slice(m_data + i, m_cols, m_rows);
     }
 
     vec_slice last_row()
