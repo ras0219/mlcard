@@ -33,14 +33,19 @@ void Card::encode(vec_slice x) const
         c.artifact_slice()[(int)artifact] = 1;
     }
 }
+static const char* card_encoded_desc(int i)
+{
+    if (i < (int)Card::Type::Count) return card_name((Card::Type)i);
+    return artifact_name((ArtifactType)(i - (int)Card::Type::Count));
+}
 
 void Player::encode(vec_slice x) const
 {
     x.assign(0.0f);
-    x[0] = health / 10.0f;
+    x[0] = health / 20.0f;
     x[1] = mana / 10.0f;
     x[2] = creature / 10.0f;
-    x[3] = avail.size() / 10.0f;
+    x[3] = avail.size() / 14.0f;
     if (artifact != ArtifactType::Count)
     {
         x.slice(4)[(int)artifact] = 1;
@@ -61,6 +66,36 @@ void Player::init(bool p1)
     avail.resize(p1 ? 5 : 7);
     for (auto&& c : avail)
         c.randomize();
+}
+
+std::vector<std::string> Game::input_descs()
+{
+    std::vector<std::string> ret;
+    ret.push_back("turn");
+    ret.push_back("player2_turn");
+    ret.push_back("me_health");
+    ret.push_back("me_mana");
+    ret.push_back("me_creature");
+    ret.push_back("me_handsize");
+    for (int i = 0; i < (int)ArtifactType::Count; ++i)
+        ret.push_back(fmt::format("me_have_{}", artifact_name((ArtifactType)i)));
+    ret.push_back("you_health");
+    ret.push_back("you_mana");
+    ret.push_back("you_creature");
+    ret.push_back("you_handsize");
+    for (int i = 0; i < (int)ArtifactType::Count; ++i)
+        ret.push_back(fmt::format("you_have_{}", artifact_name((ArtifactType)i)));
+    auto& me = player2_turn ? p2 : p1;
+    auto& you = player2_turn ? p1 : p2;
+    for (int i = 0; i < me.avail.size(); ++i)
+        for (int j = 0; j < Card::encoded_size; ++j)
+            ret.push_back(fmt::format("me_card{}_{}", i, card_encoded_desc(j)));
+
+    for (int i = 0; i < you.avail.size(); ++i)
+        for (int j = 0; j < Card::encoded_size; ++j)
+            ret.push_back(fmt::format("you_card{}_{}", i, card_encoded_desc(j)));
+
+    return ret;
 }
 
 Encoded Game::encode() const

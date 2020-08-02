@@ -15,7 +15,7 @@
 
 #define VEC_STACK_VEC(X, SZ)                                                                                           \
     auto X##_size = (SZ);                                                                                              \
-    float* X##_storage = (float*)_alloca(sizeof(float) * X##_size);                                                 \
+    float* X##_storage = (float*)_alloca(sizeof(float) * X##_size);                                                    \
     vec_slice X(X##_storage, X##_size)
 
 struct mat_slice;
@@ -140,6 +140,15 @@ struct vec_slice
         for (size_t i = 0; i < m_len; ++i)
         {
             if (m_data[i] > init) init = m_data[i];
+        }
+        return init;
+    }
+
+    float min(float init) const
+    {
+        for (size_t i = 0; i < m_len; ++i)
+        {
+            if (m_data[i] < init) init = m_data[i];
         }
         return init;
     }

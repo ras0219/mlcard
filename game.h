@@ -1,4 +1,5 @@
 #pragma once
+#pragma once
 
 #include "vec.h"
 #include <fmt/format.h>
@@ -99,6 +100,7 @@ struct Game
     std::string format() const;
     std::vector<std::string> format_public_lines() const;
     static const char* help_html(std::string_view pg);
+    std::vector<std::string> input_descs();
     std::vector<std::string> format_actions();
 
     enum class Result

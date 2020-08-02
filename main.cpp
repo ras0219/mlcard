@@ -21,11 +21,13 @@
 #include <FL/Fl_Menu_Bar.H>
 #include <FL/Fl_Multi_Browser.H>
 #include <FL/Fl_Output.H>
+#include <FL/Fl_Pack.H>
 #include <FL/Fl_Return_Button.H>
+#include <FL/Fl_Scroll.H>
 #include <FL/Fl_Select_Browser.H>
 #include <FL/Fl_Valuator.H>
 #include <FL/Fl_Widget.H>
-#include <FL/fl_draw.H>
+#include <FL/Fl_draw.H>
 #include <atomic>
 #include <fmt/format.h>
 #include <fstream>
@@ -49,6 +51,40 @@ std::vector<std::unique_ptr<Worker>> s_workers;
 struct MLStats_Group* s_mlgroup;
 struct Game_Group* s_gamegroup;
 struct Tournament_Group* s_tgroup;
+struct Model_Explorer* s_mexp;
+
+template<class T, void (T::*F)()>
+static void thunk0(Fl_Widget* w, void*)
+{
+    (((T*)w)->*F)();
+}
+
+template<class T, void (T::*F)()>
+static void thunk1(Fl_Widget* w, void*)
+{
+    (((T*)w->parent())->*F)();
+}
+
+template<class T, void (T::*F)()>
+static void thunkv(Fl_Widget*, void* w)
+{
+    (((T*)w)->*F)();
+}
+
+template<class T, int pad_left, int pad_top, int pad_right = pad_left, int pad_bottom = pad_top>
+struct Margins : Fl_Group
+{
+    Margins(int x, int y, int w, int h, const char* label = 0)
+        : Fl_Group(x, y, w, h), m(x + pad_left, y + pad_top, w - pad_left - pad_right, h - pad_top - pad_bottom, label)
+    {
+        this->resizable(m);
+        this->end();
+    }
+
+    T& child() { return m; }
+
+    T m;
+};
 
 struct Graph : Fl_Widget
 {
@@ -61,21 +97,32 @@ struct Graph : Fl_Widget
 
         if (valss.empty()) return;
 
-        auto n = 0.0;
-        auto m = 0.0001;
-        for (auto&& vals : valss)
+        auto n = min_y;
+        auto m = max_y;
+        if (!fixed_y_axis)
         {
-            for (auto&& val : vals)
+            for (auto&& vals : valss)
             {
-                n = std::min(n, val);
-                m = std::max(m, val);
+                for (auto&& val : vals)
+                {
+                    n = std::min(n, val);
+                    m = std::max(m, val);
+                }
             }
         }
 
-        for (auto&& vals : valss)
+        auto color = fl_color();
+        for (int x = 0; x < valss.size(); ++x)
         {
+            auto&& vals = valss[x];
             if (vals.size() < 2) return;
             auto inc_w = this->w() * 1.0 / (vals.size() - 1);
+            if (x == 0)
+                fl_color(0);
+            else if (x == 1)
+                fl_color(14);
+            else
+                fl_color(11);
             fl_begin_line();
             for (int i = 0; i < vals.size(); ++i)
             {
@@ -83,7 +130,12 @@ struct Graph : Fl_Widget
             }
             fl_end_line();
         }
+        fl_color(color);
     }
+
+    bool fixed_y_axis = false;
+    double min_y = 0.0;
+    double max_y = 0.0001;
 
     std::vector<std::vector<double>> valss;
 };
@@ -214,6 +266,99 @@ struct Turn_Viewer : Fl_Group
 
 const std::vector<std::shared_ptr<IModel>>& s_tgroup_models();
 
+struct Model_Explorer : Fl_Double_Window
+{
+    Model_Explorer(int w, int h, const char* label = 0)
+        : Fl_Double_Window(w, h, label)
+        , m_sweep(10, 10, w - 20, 20, "Sweep Variable")
+        , m_graphscroll(10, 40, w - 20, h - 60)
+        , m_pack(0, 0, w, h)
+    {
+        m_sweep.m.callback(thunkv<Model_Explorer, &Model_Explorer::cb_OnChangeSweep>, this);
+        m_graphscroll.box(FL_DOWN_BOX);
+        m_graphscroll.type(Fl_Scroll::VERTICAL_ALWAYS);
+        m_pack.end();
+        m_graphscroll.end();
+        this->resizable(&m_graphscroll);
+        this->end();
+    }
+
+    void resize(int x, int y, int w, int h)
+    {
+        Fl_Double_Window::resize(x, y, w, h);
+        if (m_graphscroll.h() >= m_pack.h()) m_graphscroll.scroll_to(0, 0);
+    }
+
+    void set_model(std::shared_ptr<IModel> model, Game& g)
+    {
+        m_model = std::move(model);
+        m_encoded = g.encode();
+        m_sweep.m.clear();
+        for (auto&& sw : g.input_descs())
+            m_sweep.m.add(sw.c_str());
+        m_sweep.m.value(0);
+        m_sweep.m.damage(FL_DAMAGE_ALL);
+        m_sweep.m.redraw();
+        auto actions = g.format_actions();
+
+        m_pack.begin();
+        for (int i = 0; i < actions.size(); ++i)
+        {
+            if (i == m_graphs.size())
+            {
+                m_graphs.emplace_back(std::make_unique<Graph>(0, 0, 100, 100));
+                m_graphs[i]->align(FL_ALIGN_TOP | FL_ALIGN_INSIDE);
+            }
+            m_graphs[i]->max_y = 1.0;
+            m_graphs[i]->min_y = 0.0;
+            m_graphs[i]->copy_label(actions[i].c_str());
+        }
+        m_graphs.resize(actions.size());
+        m_pack.end();
+
+        cb_OnChangeSweep();
+    }
+
+    void cb_OnChangeSweep()
+    {
+        int v = m_sweep.m.value();
+        if (v == -1) return;
+        Encoded e = m_encoded;
+        auto eval = m_model->make_eval();
+        for (auto&& g : m_graphs)
+        {
+            g->valss.resize(2);
+            g->valss[0].resize(0);
+            g->valss[1].resize(0);
+        }
+        for (int x = 0; x < 11; ++x)
+        {
+            e.data[v] = x * 0.1f;
+            m_model->calc(*eval, e, false);
+
+            double min_val = eval->out().min(1.0f);
+            for (int i = 0; i < eval->out().size() && i < m_graphs.size(); ++i)
+            {
+                m_graphs[i]->valss[0].push_back(1.0 - eval->out()[i]);
+                m_graphs[i]->valss[1].push_back(1.0 - (eval->out()[i] - min_val));
+            }
+        }
+        for (auto&& g : m_graphs)
+        {
+            g->damage(FL_DAMAGE_ALL);
+            g->redraw();
+        }
+    }
+
+    Margins<Fl_Choice, 100, 0> m_sweep;
+    Fl_Scroll m_graphscroll;
+    Fl_Pack m_pack;
+    std::vector<std::unique_ptr<Graph>> m_graphs;
+
+    std::shared_ptr<IModel> m_model;
+    Encoded m_encoded;
+};
+
 struct Game_Group : Fl_Group
 {
     Game_Group(int x, int y, int w, int h, const char* label = 0)
@@ -270,6 +415,8 @@ struct Game_Group : Fl_Group
         {
             m_turn_viewer.m_cur_turn.add(l.c_str());
         }
+
+        s_mexp->set_model(cur_model, g);
     }
 
     void on_player_action()
@@ -323,7 +470,7 @@ struct Game_Group : Fl_Group
 
     Game g;
     std::vector<Turn> turns;
-    std::unique_ptr<IModel> cur_model;
+    std::shared_ptr<IModel> cur_model;
 };
 
 void Turn_Viewer::on_player_action() { ((Game_Group*)parent())->on_player_action(); }
@@ -427,21 +574,6 @@ void save_model(IModel& model)
     }
 }
 
-template<class T, int pad_left, int pad_top, int pad_right = pad_left, int pad_bottom = pad_top>
-struct Margins : Fl_Group
-{
-    Margins(int x, int y, int w, int h, const char* label = 0)
-        : Fl_Group(x, y, w, h), m(x + pad_left, y + pad_top, w - pad_left - pad_right, h - pad_top - pad_bottom, label)
-    {
-        this->resizable(m);
-        this->end();
-    }
-
-    T& child() { return m; }
-
-    T m;
-};
-
 struct Models_List
 {
     std::mutex m;
@@ -476,24 +608,6 @@ void sync_browser(Fl_Browser& b, const Container& c, F transformer)
         b.damage(FL_DAMAGE_ALL);
         b.redraw();
     }
-}
-
-template<class T, void (T::*F)()>
-static void thunk0(Fl_Widget* w, void*)
-{
-    (((T*)w)->*F)();
-}
-
-template<class T, void (T::*F)()>
-static void thunk1(Fl_Widget* w, void*)
-{
-    (((T*)w->parent())->*F)();
-}
-
-template<class T, void (T::*F)()>
-static void thunkv(Fl_Widget*, void* w)
-{
-    (((T*)w)->*F)();
 }
 
 // template<class... Args>
@@ -860,6 +974,7 @@ struct Manager_Window : Fl_Double_Window
     void cb_show_help() { s_windows.help->show(); }
     void cb_show_tournament() { s_windows.tournament->show(); }
     void cb_show_worker0() { s_windows.worker0->show(); }
+    void cb_show_explorer() { s_mexp->show(); }
 
     Fl_Menu_Bar m_menu_bar;
     Margins<Fl_Multi_Browser, 10, 35, 5, 25> m_models;
@@ -876,10 +991,11 @@ struct Manager_Window : Fl_Double_Window
         {"&Delete", 0xffff, thunk1<Manager_Window, &cb_Delete>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
         {0, 0, 0, 0, 0, 0, 0, 0, 0},
         {"&Windows", 0, 0, 0, 64, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
-        {"&Play", 0x40073, thunk1<Manager_Window, &cb_show_play>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
-        {"&Worker0", 0x4006f, thunk1<Manager_Window, &cb_show_worker0>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
-        {"&Tournament", 0x40073, thunk1<Manager_Window, &cb_show_tournament>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
-        {"&How to Play", 0x4006e, thunk1<Manager_Window, &cb_show_help>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
+        {"&Play", 0, thunk1<Manager_Window, &cb_show_play>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
+        {"&Explorer", 0, thunk1<Manager_Window, &cb_show_explorer>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
+        {"&Worker0", 0, thunk1<Manager_Window, &cb_show_worker0>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
+        {"&Tournament", 0, thunk1<Manager_Window, &cb_show_tournament>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
+        {"&How to Play", 0, thunk1<Manager_Window, &cb_show_help>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
         {0, 0, 0, 0, 0, 0, 0, 0, 0},
         {0, 0, 0, 0, 0, 0, 0, 0, 0}};
 };
@@ -1267,6 +1383,8 @@ int main(int argc, char* argv[])
     win3->end();
     win3->resizable(new Fl_Box(10, 10, win3->w() - 20, win3->h() - 20));
     s_windows.help = win3.get();
+
+    s_mexp = new Model_Explorer(600, 700, "Explorer");
 
     (new Manager_Window(600, 700))->show(argc, argv);
 
