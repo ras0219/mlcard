@@ -18,6 +18,7 @@ struct APIModel
     std::shared_ptr<IModel> m;
 };
 
+API void init() { srand((unsigned int)time(NULL)); }
 API APIGame* alloc_game()
 {
     auto r = std::make_unique<APIGame>();
