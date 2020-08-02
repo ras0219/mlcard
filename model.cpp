@@ -353,6 +353,15 @@ struct ReLULayers
         w.EndArray();
         w.EndObject();
     }
+
+    ModelDims dims() const
+    {
+        std::vector<int> d;
+        for (auto&& l : ls)
+            d.push_back(l.in_size());
+        d.push_back(ls.back().out_size());
+        return ModelDims{std::move(d)};
+    }
 };
 
 struct PerCardInputModel
@@ -365,6 +374,8 @@ struct PerCardInputModel
 
         vec_slice out() { return l.out(); }
     };
+
+    ModelDims dims() const { return l.dims(); }
 
     void randomize(int input_size, const std::vector<int>& middle, int output_size)
     {
@@ -389,6 +400,7 @@ struct PerYouCardInputModel
         vec_slice out() { return l1.out(); }
     };
 
+    ModelDims dims() const { return l.dims(); }
     void randomize(int input_size, const std::vector<int>& middle, int output_size)
     {
         l.randomize(input_size, middle, output_size);
@@ -414,6 +426,7 @@ struct PerCardOutputModel
         vec_slice err() { return l.errs(); }
     };
 
+    ModelDims dims() const { return l.dims(); }
     void randomize(int input_size, const std::vector<int>& middle) { l.randomize(input_size, middle, 1); }
 
     void calc(Eval& e) { l.calc(e.l, e.input); }
@@ -527,6 +540,25 @@ struct Model final : IModel
 
         p.randomize(l3_out_width, 1);
         card_out_model.randomize(l3_out_width + card_out_width, dims.children.at("card_out").dims);
+    }
+    virtual std::unique_ptr<ModelDims> dims() const override
+    {
+        auto erase_first = [](ModelDims&& d) {
+            d.dims.erase(d.dims.begin());
+            return std::move(d);
+        };
+        auto erase_first_last = [](ModelDims&& d) {
+            d.dims.erase(d.dims.begin());
+            d.dims.pop_back();
+            return std::move(d);
+        };
+        return std::unique_ptr<ModelDims>(new ModelDims({
+            {"b", erase_first(b.dims())},
+            {"l", erase_first(l.dims())},
+            {"card_in", erase_first(card_in_model.dims())},
+            {"you_card_in", erase_first_last(you_card_in_model.dims())},
+            {"card_out", erase_first_last(card_out_model.dims())},
+        }));
     }
 
     virtual void calc(IEval& e, Encoded& g, bool full) override { calc_inner((Eval&)e, g, full); }
@@ -692,39 +724,36 @@ std::unique_ptr<IModel> load_model(const std::string& s)
 
 const ModelDims& default_model_dims()
 {
-    static ModelDims md{{},
-                        {
-                            {"b", ModelDims({30, 30})},
-                            {"l", ModelDims{{50, 40, 30, 30}}},
-                            {"card_in", ModelDims{{20, 20}}},
-                            {"you_card_in", ModelDims{{20, 20}}},
-                            {"card_out", ModelDims{{20, 20}}},
-                        }};
+    static ModelDims md{{
+        {"b", ModelDims({30, 30})},
+        {"l", ModelDims{{50, 40, 30, 30}}},
+        {"card_in", ModelDims{{20, 20}}},
+        {"you_card_in", ModelDims{{20, 20}}},
+        {"card_out", ModelDims{{20, 20}}},
+    }};
     return md;
 }
 
 const ModelDims& medium_model_dims()
 {
-    static ModelDims md{{},
-                        {
-                            {"b", ModelDims{{30, 30}}},
-                            {"l", ModelDims{{30, 30, 30, 30}}},
-                            {"card_in", ModelDims{{20, 20}}},
-                            {"you_card_in", ModelDims{{20, 20}}},
-                            {"card_out", ModelDims{{20, 20}}},
-                        }};
+    static ModelDims md{{
+        {"b", ModelDims{{30, 30}}},
+        {"l", ModelDims{{30, 30, 30, 30}}},
+        {"card_in", ModelDims{{20, 20}}},
+        {"you_card_in", ModelDims{{20, 20}}},
+        {"card_out", ModelDims{{20, 20}}},
+    }};
     return md;
 }
 
 const ModelDims& small_model_dims()
 {
-    static ModelDims md{{},
-                        {
-                            {"b", ModelDims{{6}}},
-                            {"l", ModelDims{{6}}},
-                            {"card_in", ModelDims{{6}}},
-                            {"you_card_in", ModelDims{{6}}},
-                            {"card_out", ModelDims{{6}}},
-                        }};
+    static ModelDims md{{
+        {"b", ModelDims{{6}}},
+        {"l", ModelDims{{6}}},
+        {"card_in", ModelDims{{6}}},
+        {"you_card_in", ModelDims{{6}}},
+        {"card_out", ModelDims{{6}}},
+    }};
     return md;
 }

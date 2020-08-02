@@ -33,6 +33,7 @@ struct IModel
 
     virtual std::unique_ptr<IModel> clone() const = 0;
     virtual void serialize(RJWriter& w) const = 0;
+    virtual std::unique_ptr<ModelDims> dims() const = 0;
 
     void increment_name() { ++id; }
     std::string name() const { return m_name + "#" + std::to_string(id); }

@@ -7,10 +7,9 @@
 struct ModelDims
 {
     ModelDims() = default;
-    ModelDims(std::vector<int> dims, std::map<std::string, ModelDims> children = {})
-        : children(std::move(children)), dims(std::move(dims))
-    {
-    }
+    explicit ModelDims(std::vector<int> dims) : dims(std::move(dims)) { }
+    ModelDims(std::initializer_list<int> dims) : dims(dims) { }
+    explicit ModelDims(std::map<std::string, ModelDims> childs) : children(std::move(childs)) { }
 
     std::map<std::string, ModelDims> children;
     std::vector<int> dims;
