@@ -27,14 +27,14 @@
 #include <FL/Fl_Select_Browser.H>
 #include <FL/Fl_Valuator.H>
 #include <FL/Fl_Widget.H>
-#include <FL/Fl_draw.H>
+#include <FL/fl_draw.H>
 #include <atomic>
+#include <condition_variable>
 #include <fmt/format.h>
 #include <fstream>
 #include <memory>
 #include <mutex>
 #include <rapidjson/writer.h>
-#include <shobjidl_core.h>
 #include <sstream>
 #include <stdio.h>
 #include <string>
@@ -42,8 +42,11 @@
 #include <time.h>
 #include <valarray>
 #include <vector>
+#if defined(_WIN32)
+#include <shobjidl_core.h>
 #include <winrt/base.h>
 #pragma comment(lib, "windowsapp")
+#endif
 
 using namespace rapidjson;
 
@@ -477,6 +480,7 @@ void Turn_Viewer::on_player_action() { ((Game_Group*)parent())->on_player_action
 
 std::unique_ptr<IModel> open_model()
 {
+#if defined(_WIN32)
     HRESULT hr;
 
     COMDLG_FILTERSPEC rgSpec[] = {
@@ -519,11 +523,13 @@ std::unique_ptr<IModel> open_model()
         fmt::print(L"Failed while loading model from {}: ", p);
         fmt::print("{}\n", e);
     }
+#endif
     return nullptr;
 }
 
 void save_model(IModel& model)
 {
+#if defined(_WIN32)
     HRESULT hr;
 
     COMDLG_FILTERSPEC rgSpec[] = {
@@ -572,6 +578,7 @@ void save_model(IModel& model)
         fmt::print(L"Failed to write {}: ", path);
         fmt::print("{}", e.what());
     }
+#endif
 }
 
 struct Models_List
@@ -982,20 +989,22 @@ struct Manager_Window : Fl_Double_Window
     Margins<Tournament_Browser, 5, 5, 10, 10> m_tourny;
     Rename_Modal_Window m_modal_rename;
 
+    using MW = Manager_Window;
+
     static inline const Fl_Menu_Item s_menu_items[] = {
         {"&File", 0, 0, 0, 64, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
-        {"&New Model", 0x4006e, thunk1<Manager_Window, &cb_New>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
-        {"&Open", 0x4006f, thunk1<Manager_Window, &cb_Open>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
-        {"&Save", 0x40073, thunk1<Manager_Window, &cb_Save>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
-        {"&Rename", 0xffbf, thunk1<Manager_Window, &cb_Rename>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
-        {"&Delete", 0xffff, thunk1<Manager_Window, &cb_Delete>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
+        {"&New Model", 0x4006e, thunk1<MW, &MW::cb_New>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
+        {"&Open", 0x4006f, thunk1<MW, &MW::cb_Open>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
+        {"&Save", 0x40073, thunk1<MW, &MW::cb_Save>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
+        {"&Rename", 0xffbf, thunk1<MW, &MW::cb_Rename>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
+        {"&Delete", 0xffff, thunk1<MW, &MW::cb_Delete>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
         {0, 0, 0, 0, 0, 0, 0, 0, 0},
         {"&Windows", 0, 0, 0, 64, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
-        {"&Play", 0, thunk1<Manager_Window, &cb_show_play>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
-        {"&Explorer", 0, thunk1<Manager_Window, &cb_show_explorer>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
-        {"&Worker0", 0, thunk1<Manager_Window, &cb_show_worker0>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
-        {"&Tournament", 0, thunk1<Manager_Window, &cb_show_tournament>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
-        {"&How to Play", 0, thunk1<Manager_Window, &cb_show_help>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
+        {"&Play", 0, thunk1<MW, &MW::cb_show_play>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
+        {"&Explorer", 0, thunk1<MW, &MW::cb_show_explorer>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
+        {"&Worker0", 0, thunk1<MW, &MW::cb_show_worker0>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
+        {"&Tournament", 0, thunk1<MW, &MW::cb_show_tournament>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
+        {"&How to Play", 0, thunk1<MW, &MW::cb_show_help>, 0, 0, (uchar)FL_NORMAL_LABEL, 0, 14, 0},
         {0, 0, 0, 0, 0, 0, 0, 0, 0},
         {0, 0, 0, 0, 0, 0, 0, 0, 0}};
 };

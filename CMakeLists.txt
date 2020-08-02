@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.14)
 cmake_policy(SET CMP0091 NEW)
-set(VCPKG_TARGET_TRIPLET "x64-windows-static" CACHE STRING "" FORCE)
+set(VCPKG_TARGET_TRIPLET "x64-windows-static" CACHE STRING "")
 set(CMAKE_CXX_STANDARD 17)
 
 set(CMAKE_TOOLCHAIN_FILE ${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake

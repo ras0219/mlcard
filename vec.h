@@ -7,12 +7,15 @@
 #define VEC_CHECK_BOUNDS(X)                                                                                            \
     do                                                                                                                 \
     {                                                                                                                  \
-        if ((X).size() != size()) std::terminate();                                                                    \
+        if ((X).size() != this->size()) std::terminate();                                                              \
     } while (0)
 #else
 #define VEC_CHECK_BOUNDS(X)
 #endif
 
+#if !defined(_WIN32)
+#define _alloca alloca
+#endif
 #define VEC_STACK_VEC(X, SZ)                                                                                           \
     auto X##_size = (SZ);                                                                                              \
     float* X##_storage = (float*)_alloca(sizeof(float) * X##_size);                                                    \

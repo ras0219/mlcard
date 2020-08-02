@@ -5,7 +5,11 @@
 #include <rapidjson/writer.h>
 #include <time.h>
 
+#if defined(_MSC_VER)
 #define API extern "C" __declspec(dllexport)
+#else
+#define API extern "C" __attribute__((visibility("default")))
+#endif
 
 struct APIGame
 {
