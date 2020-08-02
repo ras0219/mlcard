@@ -19,7 +19,7 @@ find_package(FLTK CONFIG REQUIRED)
 find_package(fmt CONFIG REQUIRED)
 
 add_library(mlcard_objs INTERFACE)
-target_sources(mlcard_objs INTERFACE "vec.h" "model.h" "model.cpp" "game.h" "game.cpp" "ai_play.h" "rjwriter.h" "modeldims.h")
+target_sources(mlcard_objs INTERFACE "vec.h" "model.h" "model.cpp" "game.h" "game.cpp" "ai_play.h" "rjwriter.h" "modeldims.h" "worker.h" "worker.cpp")
 target_link_libraries(mlcard_objs INTERFACE fmt::fmt)
 target_include_directories(mlcard_objs INTERFACE ${RAPIDJSON_INCLUDE_DIRS})
 
@@ -31,7 +31,7 @@ set_target_properties(libmlcard
     PREFIX ""
 )
 
-add_executable(mlcard "main.cpp" "worker.h" "worker.cpp")
+add_executable(mlcard "main.cpp")
 set_property(TARGET mlcard PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 target_link_libraries(mlcard PRIVATE fltk mlcard_objs)
 target_include_directories(mlcard PRIVATE ${RAPIDJSON_INCLUDE_DIRS})

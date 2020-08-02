@@ -484,7 +484,7 @@ struct ReLUCascade
 
     void deserialize(const Value& v)
     {
-        if (find_or_throw(v, "type") != "RELUCascade") throw "Expected type RELUCascade";
+        if (find_or_throw(v, "type") != "ReLUCascade") throw "Expected type ReLUCascade";
         m_inner_size = find_or_throw(v, "inner_size").GetInt();
         auto data = find_or_throw(v, "data").GetArray();
         ls.resize(data.Size());
@@ -499,7 +499,7 @@ struct ReLUCascade
     {
         w.StartObject();
         w.Key("type");
-        w.String("RELULayers");
+        w.String("ReLUCascade");
         w.Key("inner_size");
         w.Int(m_inner_size);
         w.Key("data");
