@@ -78,7 +78,7 @@ struct Layer
 
         for (size_t j = 0; j < m_output; ++j)
         {
-            out[j] = r_init[j] + c.col(j).dot(input);
+            out[j] = r_init[j] + c.col(j).slice(0, input.size()).dot(input);
         }
 
         out.slice(0, m_min_io).add(input.slice(0, m_min_io));
@@ -877,10 +877,10 @@ const ModelDims& default_model_dims()
 {
     static ModelDims md{{
         {"b", ModelDims({30, 30})},
-        {"l", ModelDims{{50, 40, 30, 30}}},
+        {"l", ModelDims{{40, 40, 30, 30}}},
         {"card_in", ModelDims{{20, 20}}},
         {"you_card_in", ModelDims{{20, 20}}},
-        {"card_out", ModelDims{{20, 20}}},
+        {"card_out", ModelDims{{30, 20, 20, 20}}},
     }};
     return md;
 }
