@@ -50,7 +50,7 @@ const char* card_name(Card::Type t);
 struct Player
 {
     int health = 20;
-    int mana = 1;
+    int land = 1;
     int creature = 0;
     ArtifactType artifact = ArtifactType::Count;
     std::vector<Card> avail;
@@ -66,7 +66,7 @@ struct Player
 
 struct Encoded
 {
-    static constexpr size_t board_size = 2 + Player::encoded_size * 2;
+    static constexpr size_t board_size = 4 + Player::encoded_size * 2;
     static constexpr size_t card_size = Card::encoded_size;
 
     vec data;
@@ -89,6 +89,8 @@ struct Game
     Player p2;
     bool player2_turn = false;
     int turn = 0;
+    int mana = 0;
+    bool played_land = false;
     Encoded encode() const;
 
     void init();

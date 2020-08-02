@@ -57,8 +57,8 @@ API const char* serialize_game(APIGame* g)
         }
         w.Key("health");
         w.Int(p.health);
-        w.Key("mana");
-        w.Int(p.mana);
+        w.Key("land");
+        w.Int(p.land);
         w.Key("cards");
         w.StartArray();
         for (auto&& c : p.avail)
@@ -87,6 +87,10 @@ API const char* serialize_game(APIGame* g)
     srlz_player(g->g.p2);
     w.Key("turn");
     w.Int(g->g.turn);
+    w.Key("mana");
+    w.Int(g->g.mana);
+    w.Key("played_land");
+    w.Bool(g->g.played_land);
     w.EndObject();
     return g->s.GetString();
 }

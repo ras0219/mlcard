@@ -43,7 +43,7 @@ void Player::encode(vec_slice x) const
 {
     x.assign(0.0f);
     x[0] = health / 20.0f;
-    x[1] = mana / 10.0f;
+    x[1] = land / 10.0f;
     x[2] = creature / 10.0f;
     x[3] = avail.size() / 14.0f;
     if (artifact != ArtifactType::Count)
@@ -63,7 +63,7 @@ void Player::init(bool p1)
 {
     *this = Player();
     avail.clear();
-    avail.resize(p1 ? 5 : 7);
+    avail.resize(p1 ? 6 : 7);
     for (auto&& c : avail)
         c.randomize();
 }
@@ -104,8 +104,10 @@ Encoded Game::encode() const
     e.data.realloc_uninitialized(Encoded::board_size + Encoded::card_size * (p1.cards() + p2.cards()));
     e.data[0] = turn / 30.0f;
     e.data[1] = player2_turn;
+    e.data[2] = mana / 10.0f;
+    e.data[3] = played_land;
 
-    auto [me, x2] = e.data.slice(2).split(Player::encoded_size);
+    auto [me, x2] = e.data.slice(4).split(Player::encoded_size);
     auto [you, x3] = x2.split(Player::encoded_size);
 
     if (player2_turn)
@@ -136,24 +138,29 @@ void Game::init()
     p2.init(false);
     player2_turn = false;
     turn = 0;
+    mana = cur_player().land;
+    played_land = false;
 }
 
 const char* Game::help_html(std::string_view pg)
 {
     return "<h1>How to Play</h1>"
            "<h2>Setup and Objective</h2>"
-           "<p>Player 1 initially has 5 cards in hand. Player 2 initially has 7 cards in hand. Both players start "
-           "with 20 health and 1 mana.</p>"
+           "<p>Player 1 initially has 6 cards in hand. Player 2 initially has 7 cards in hand. Both players start "
+           "with 20 health and 1 land.</p>"
            "<p>Player 1 wins once Player 2's health reaches 0 or less. Player 2 wins once Player 1's health reaches 0 "
            "or less. If 32 turns have elapsed and neither player has won, it is a timeout and the game should be "
            "restarted.</p>"
            "<h2>Per Turn</h2>"
-           "<p>Each turn, the current player plays up to one card. If the card is a land, the player's mana "
-           "increases by one. If the card is not a land and costs less than or equal to the player's current mana, "
-           "the card's effect takes place. If the card is not a land and costs more than the player's current "
-           "mana, the player's mana increases by one (called 'Play as Land').</p>"
-           "<p>Finally, the opposing player loses health equal to the current player's creature value, the current "
-           "player draws a card, and the opposing player takes their turn.<p>"
+           "<p>Each turn, the current player starts with mana equal to their lands. The current player may then play "
+           "any number of cards. If the card is a land, the player's lands "
+           "increase by one. Only one land may be played each turn. If the card is not a land and costs less than or "
+           "equal to the player's current mana, the card's effect takes place, and the player's mana is decreased by "
+           "the cost. If the card costs more than the player's current mana, that card is treated like a Land (called "
+           "'Play as Land') and subject to the same one-per-turn limit.</p>"
+           "<p>Once the current player has finished playign cards, the opposing player loses health equal to the "
+           "current player's creature value, the current player draws a card, and the opposing player takes their "
+           "turn.<p>"
            "<h2>Card Effects</h2>"
            "<ul>"
            "<li>Damage X: Costs X. Reduce the opponent's health by X.</li>"
@@ -163,7 +170,7 @@ const char* Game::help_html(std::string_view pg)
            "<li>Draw X: Costs X. Draws 3 cards.</li>"
            "<li>Artifact X: Costs 0. Replaces the player's current artifact."
            "<ul>"
-           "<li>Double Mana: Player can play cards at half cost.</li>"
+           "<li>Double Mana: Player starts the turn with mana equal to double their lands.</li>"
            "<li>Half Creature Damage: Player takes half damage rounded down from creatures.</li>"
            "<li>Direct Damage Immunity: Player takes no damage from non-creature sources.</li>"
            "<li>Heals cause Damage: Heal X additionally acts as Damage X.</li>"
@@ -183,95 +190,130 @@ void Game::advance(int action)
         action = 0;
     }
 
+    bool passed = action == 0;
     if (action > 0)
     {
         auto& card = me.avail[action - 1];
         if (card.type == Card::Type::Land)
         {
-            me.mana++;
-            if (you.artifact != ArtifactType::DirectImmune && me.artifact == ArtifactType::LandCauseDamage)
+            if (played_land)
             {
-                you.health -= me.mana;
+                passed = true;
+            }
+            else
+            {
+                played_land = true;
+                me.land++;
+                if (you.artifact != ArtifactType::DirectImmune && me.artifact == ArtifactType::LandCauseDamage)
+                {
+                    you.health -= me.land;
+                }
             }
         }
         else if (card.type == Card::Type::Artifact)
         {
             me.artifact = card.artifact;
         }
-        else if (me.mana >= card.value || (me.artifact == ArtifactType::DoubleMana && me.mana * 2 >= card.value))
-        {
-            if (card.type == Card::Type::Creature)
-            {
-                me.creature = std::max(me.creature, card.value);
-            }
-            else if (card.type == Card::Type::Direct)
-            {
-                if (you.artifact != ArtifactType::DirectImmune)
-                {
-                    you.health -= card.value;
-                }
-            }
-            else if (card.type == Card::Type::Draw3)
-            {
-                me.avail.emplace_back();
-                me.avail.back().randomize();
-                me.avail.emplace_back();
-                me.avail.back().randomize();
-            }
-            else if (card.type == Card::Type::Heal)
-            {
-                me.health += card.value;
-                if (you.artifact != ArtifactType::DirectImmune && me.artifact == ArtifactType::HealCauseDamage)
-                {
-                    you.health -= card.value;
-                }
-            }
-            else
-                std::terminate();
-        }
         else
         {
-            me.mana++;
-            if (you.artifact != ArtifactType::DirectImmune && me.artifact == ArtifactType::LandCauseDamage)
+            if (mana >= card.value)
             {
-                you.health -= me.mana;
+                mana -= card.value;
+                if (card.type == Card::Type::Creature)
+                {
+                    me.creature = std::max(me.creature, card.value);
+                }
+                else if (card.type == Card::Type::Direct)
+                {
+                    if (you.artifact != ArtifactType::DirectImmune)
+                    {
+                        you.health -= card.value;
+                    }
+                }
+                else if (card.type == Card::Type::Draw3)
+                {
+                    me.avail.emplace_back();
+                    me.avail.back().randomize();
+                    me.avail.emplace_back();
+                    me.avail.back().randomize();
+                    me.avail.emplace_back();
+                    me.avail.back().randomize();
+                }
+                else if (card.type == Card::Type::Heal)
+                {
+                    me.health += card.value;
+                    if (you.artifact != ArtifactType::DirectImmune && me.artifact == ArtifactType::HealCauseDamage)
+                    {
+                        you.health -= card.value;
+                    }
+                }
+                else
+                    std::terminate();
+            }
+            else
+            {
+                if (played_land)
+                {
+                    passed = true;
+                }
+                else
+                {
+                    played_land = true;
+                    me.land++;
+                    if (you.artifact != ArtifactType::DirectImmune && me.artifact == ArtifactType::LandCauseDamage)
+                    {
+                        you.health -= me.land;
+                    }
+                }
             }
         }
 
         // Discard
-        me.avail.erase(me.avail.begin() + action - 1);
+        if (!passed)
+        {
+            me.avail.erase(me.avail.begin() + action - 1);
+        }
     }
-    me.avail.emplace_back();
-    me.avail.back().randomize();
 
-    if (you.artifact == ArtifactType::CreatureImmune)
+    if (passed)
     {
-        you.health -= me.creature / 2;
+        me.avail.emplace_back();
+        me.avail.back().randomize();
+
+        ++turn;
+
+        if (you.artifact == ArtifactType::CreatureImmune)
+        {
+            you.health -= me.creature / 2;
+        }
+        else
+        {
+            you.health -= me.creature;
+        }
+        player2_turn = !player2_turn;
+        mana = cur_player().land;
+        if (cur_player().artifact == ArtifactType::DoubleMana) mana *= 2;
+        played_land = false;
     }
-    else
-    {
-        you.health -= me.creature;
-    }
-    player2_turn = !player2_turn;
-    ++turn;
 }
 
 std::string Game::format() const
 {
-    return fmt::format("Turn {}: P1{}: [hp: {}, atk: {}, art: {}, mana: {}, {}] P2{}: [hp: {}, atk: {}, art: "
-                       "{}, mana: {}, {}]",
+    return fmt::format("Turn {}: {}: P1{}: [hp: {}, atk: {}, art: {}, land: {}, {}] P2{}: [hp: {}, atk: {}, art: "
+                       "{}, land: {}, {}]",
                        turn + 1,
+                       mana,
                        player2_turn ? ' ' : '*',
                        p1.health,
                        p1.creature,
                        p1.artifact,
-                       p1.mana,
+                       p1.land,
                        p1.avail,
                        player2_turn ? '*' : ' ',
                        p2.health,
                        p2.creature,
                        p2.artifact,
-                       p2.mana,
+                       p2.land,
                        p2.avail);
 }
 const char* artifact_name(ArtifactType t)
@@ -312,12 +354,12 @@ std::vector<std::string> Game::format_public_lines() const
         default: break;
     }
     if (player2_turn)
-        ret.push_back(fmt::format("Turn {}: Player 2's turn", turn + 1));
+        ret.push_back(fmt::format("Turn {}: Player 2's turn: {} mana", turn + 1, mana));
     else
-        ret.push_back(fmt::format("Turn {}: Player 1's turn", turn + 1));
+        ret.push_back(fmt::format("Turn {}: Player 1's turn: {} mana", turn + 1, mana));
 
     auto format_player = [&ret](char c, const Player& p) {
-        ret.push_back(fmt::format("P{} Health: {}    Hand: {}    Mana: {}", c, p.health, p.avail.size(), p.mana));
+        ret.push_back(fmt::format("P{} Health: {}    Hand: {}    Land: {}", c, p.health, p.avail.size(), p.land));
         if (p.artifact != ArtifactType::Count)
         {
             ret.push_back(fmt::format("P{} Artifact: {}", c, artifact_name(p.artifact)));
@@ -342,7 +384,12 @@ std::vector<std::string> Game::format_actions()
     for (int i = 0; i < p.cards(); ++i)
     {
         if (p.avail[i].type == Card::Type::Land)
-            actions.push_back("Play Land");
+        {
+            if (played_land)
+                actions.push_back("Pass - Play Land");
+            else
+                actions.push_back("Play Land");
+        }
         else if (p.avail[i].type == Card::Type::Artifact)
         {
             actions.push_back(fmt::format("Play Artifact: {}", artifact_name(p.avail[i].artifact)));
@@ -350,7 +397,7 @@ std::vector<std::string> Game::format_actions()
         else
         {
             const char* prefix = "Play";
-            auto mana = p.artifact != ArtifactType::DoubleMana ? p.mana : p.mana * 2;
+            if (p.avail[i].value > mana && played_land) prefix = "Pass -";
             const char* suffix = p.avail[i].value > mana ? " as Land" : "";
             if (p.avail[i].type == Card::Type::Creature)
             {

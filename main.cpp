@@ -435,7 +435,7 @@ struct Game_Group : Fl_Group
     {
         auto& turn = turns.back();
         m_gamelog.add(fmt::format("@.Turn {}:   AI: {} FAI: {}  Action: {}",
-                                  turns.size(),
+                                  g.turn + 1,
                                   turn.eval->out(),
                                   turn.eval_full->out(),
                                   g.format_actions()[turn.chosen_action])
