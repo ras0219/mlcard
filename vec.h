@@ -58,6 +58,7 @@ struct vec_slice
     vec_slice slice() { return *this; }
     vec_slice slice(size_t offset) { return {m_data + offset, m_len - offset}; }
     vec_slice slice(size_t offset, size_t len) { return {m_data + offset, len}; }
+    vec_slice rslice(size_t offset, size_t len) { return {m_data + m_len - offset, len}; }
     std::pair<vec_slice, vec_slice> split(size_t offset)
     {
         return {{m_data, offset}, {m_data + offset, m_len - offset}};
