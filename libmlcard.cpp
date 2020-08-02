@@ -2,6 +2,7 @@
 #include "game.h"
 #include "model.h"
 #include "rjwriter.h"
+#include <time.h>
 #include <rapidjson/writer.h>
 
 #define API extern "C" __declspec(dllexport)
@@ -17,6 +18,10 @@ struct APIModel
     std::shared_ptr<IModel> m;
 };
 
+API void init()
+{   
+    srand((unsigned int)time(NULL));
+}
 API APIGame* alloc_game()
 {
     auto r = std::make_unique<APIGame>();
@@ -34,6 +39,7 @@ API void free_model(APIModel* m) { std::unique_ptr<APIModel> u(m); }
 
 API const char* serialize_game(APIGame* g)
 {
+    g->s.Clear();
     rapidjson::Writer w(g->s);
     w.StartObject();
     w.Key("current_player");
