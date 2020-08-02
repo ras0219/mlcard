@@ -1,6 +1,8 @@
 #include "game.h"
+#include "rjwriter.h"
 #include <cstdlib>
 #include <fmt/format.h>
+#include <rapidjson/document.h>
 
 struct card_encode_slice : vec_slice
 {
@@ -375,6 +377,124 @@ std::vector<std::string> Game::format_public_lines() const
     format_player('2', p2);
 
     return ret;
+}
+
+void Game::serialize(RJWriter& w)
+{
+    w.StartObject();
+    w.Key("current_player");
+    w.String(player2_turn ? "player2" : "player1");
+    w.Key("actions");
+    w.StartArray();
+    for (auto&& a : format_actions())
+        w.String(a.c_str());
+    w.EndArray();
+    auto srlz_player = [&w](Player& p) {
+        w.StartObject();
+        if (p.artifact != ArtifactType::Count)
+        {
+            w.Key("artifact");
+            w.String(artifact_name(p.artifact));
+            w.Key("artifact_id");
+            w.Int((int)p.artifact);
+        }
+        if (p.creature > 0)
+        {
+            w.Key("creature");
+            w.Int(p.creature);
+        }
+        w.Key("health");
+        w.Int(p.health);
+        w.Key("land");
+        w.Int(p.land);
+        w.Key("cards");
+        w.StartArray();
+        for (auto&& c : p.avail)
+        {
+            w.StartObject();
+            w.Key("id");
+            w.Int((int)c.type);
+            w.Key("type");
+            w.String(card_name(c.type));
+            if (c.type == Card::Type::Artifact)
+            {
+                w.Key("artifact");
+                w.String(artifact_name(c.artifact));
+                w.Key("artifact_id");
+                w.Int((int)c.artifact);
+            }
+            else
+            {
+                w.Key("value");
+                w.Int(c.value);
+            }
+            w.EndObject();
+        }
+        w.EndArray();
+        w.EndObject();
+    };
+    w.Key("player1");
+    srlz_player(p1);
+    w.Key("player2");
+    srlz_player(p2);
+    w.Key("turn");
+    w.Int(turn);
+    w.Key("mana");
+    w.Int(mana);
+    w.Key("played_land");
+    w.Bool(played_land);
+    w.EndObject();
+}
+
+using rapidjson::Value;
+
+static const Value& find_or_throw(const Value& doc, const char* key)
+{
+    auto it = doc.FindMember(key);
+    if (it == doc.MemberEnd()) throw std::runtime_error(fmt::format("could not find .{}", key));
+    return it->value;
+}
+
+void Game::deserialize(const std::string& s)
+{
+    rapidjson::Document doc;
+    doc.Parse(s.c_str(), s.size());
+    player2_turn = find_or_throw(doc, "current_player").GetString() == std::string_view("player2");
+    played_land = find_or_throw(doc, "played_land").GetBool();
+    mana = find_or_throw(doc, "mana").GetInt();
+    turn = find_or_throw(doc, "turn").GetInt();
+    auto desrlz_player = [](const Value& v, Player& p) {
+        p.land = find_or_throw(v, "land").GetInt();
+        p.health = find_or_throw(v, "health").GetInt();
+        auto it_creature = v.FindMember("creature");
+        if (it_creature == v.MemberEnd())
+            p.creature = 0;
+        else
+            p.creature = it_creature->value.GetInt();
+
+        auto it_artifact = v.FindMember("artifact_id");
+        if (it_artifact == v.MemberEnd())
+            p.artifact = ArtifactType::Count;
+        else
+            p.artifact = (ArtifactType)it_artifact->value.GetInt();
+
+        auto desrlz_card = [](const Value& v, Card& c) {
+            c.type = (Card::Type)find_or_throw(v, "type").GetInt();
+            auto it_artifact = v.FindMember("artifact_id");
+            if (it_artifact == v.MemberEnd())
+                c.value = find_or_throw(v, "value").GetInt();
+            else
+                c.artifact = (ArtifactType)it_artifact->value.GetInt();
+        };
+        p.avail.clear();
+        for (auto&& c : find_or_throw(v, "cards").GetArray())
+        {
+            p.avail.emplace_back();
+            desrlz_card(c, p.avail.back());
+        }
+    };
+    desrlz_player(find_or_throw(doc, "player1"), p1);
+    desrlz_player(find_or_throw(doc, "player2"), p2);
 }
 
 std::vector<std::string> Game::format_actions()

@@ -11,7 +11,7 @@
 
 using rapidjson::Value;
 
-const Value& find_or_throw(const Value& doc, const char* key)
+static const Value& find_or_throw(const Value& doc, const char* key)
 {
     auto it = doc.FindMember(key);
     if (it == doc.MemberEnd()) throw std::runtime_error(fmt::format("could not find .{}", key));

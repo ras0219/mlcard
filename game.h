@@ -105,6 +105,9 @@ struct Game
     std::vector<std::string> input_descs();
     std::vector<std::string> format_actions();
 
+    void serialize(struct RJWriter& w);
+    void deserialize(const std::string& str);
+
     enum class Result
     {
         p1_win,

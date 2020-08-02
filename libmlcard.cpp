@@ -3,6 +3,7 @@
 #include "model.h"
 #include "rjwriter.h"
 #include <rapidjson/writer.h>
+#include <time.h>
 
 #define API extern "C" __declspec(dllexport)
 
@@ -32,66 +33,13 @@ API APIModel* alloc_model(const char* json)
 API void free_game(APIGame* g) { std::unique_ptr<APIGame> u(g); }
 API void free_model(APIModel* m) { std::unique_ptr<APIModel> u(m); }
 
+API void init() { srand((unsigned int)time(NULL)); }
+
 API const char* serialize_game(APIGame* g)
 {
-    rapidjson::Writer w(g->s);
-    w.StartObject();
-    w.Key("current_player");
-    w.String(g->g.player2_turn ? "player2" : "player1");
-    w.Key("actions");
-    w.StartArray();
-    for (auto&& a : g->g.format_actions())
-        w.String(a.c_str());
-    w.EndArray();
-    auto srlz_player = [&w, g](Player& p) {
-        w.StartObject();
-        if (p.artifact != ArtifactType::Count)
-        {
-            w.Key("artifact");
-            w.String(artifact_name(p.artifact));
-        }
-        if (p.creature > 0)
-        {
-            w.Key("creature");
-            w.Int(p.creature);
-        }
-        w.Key("health");
-        w.Int(p.health);
-        w.Key("land");
-        w.Int(p.land);
-        w.Key("cards");
-        w.StartArray();
-        for (auto&& c : p.avail)
-        {
-            w.StartObject();
-            w.Key("type");
-            w.String(card_name(c.type));
-            if (c.type == Card::Type::Artifact)
-            {
-                w.Key("artifact");
-                w.String(artifact_name(c.artifact));
-            }
-            else
-            {
-                w.Key("value");
-                w.Int(c.value);
-            }
-            w.EndObject();
-        }
-        w.EndArray();
-        w.EndObject();
-    };
-    w.Key("player1");
-    srlz_player(g->g.p1);
-    w.Key("player2");
-    srlz_player(g->g.p2);
-    w.Key("turn");
-    w.Int(g->g.turn);
-    w.Key("mana");
-    w.Int(g->g.mana);
-    w.Key("played_land");
-    w.Bool(g->g.played_land);
-    w.EndObject();
+    g->s.Clear();
+    RJWriter w(g->s);
+    g->g.serialize(w);
     return g->s.GetString();
 }
 
