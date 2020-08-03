@@ -73,13 +73,7 @@ struct Layer
 
     void calc(vec_slice input, vec_slice out)
     {
-        auto c = coefs();
-        auto r_init = c.row(m_input - 1);
-
-        for (size_t j = 0; j < m_output; ++j)
-        {
-            out[j] = r_init[j] + coefs().col(j).slice(0, m_input - 1).dot(input);
-        }
+        out.assign_mv1_mult(coefs().transpose(), input);
 
         out.slice(0, m_min_io).add(input.slice(0, m_min_io));
     }
@@ -92,9 +86,9 @@ struct Layer
 
     void backprop(vec_slice errs, vec_slice input, vec_slice out, vec_slice grad)
     {
+        errs.assign_mv_mult(coefs().slice_rows(0, coefs().rows() - 1), grad);
         for (size_t j = 0; j < m_input - 1; ++j)
         {
-            errs[j] = grad.dot(coefs().row(j));
             delta().row(j).fma(grad, input[j]);
         }
 
@@ -237,6 +231,15 @@ struct ReLULayers
     int out_size() const { return ls.back().out_size(); }
     int inner_size() const { return m_inner_size; }
 
+    void randomize(const ModelDims& dims)
+    {
+        auto d = dims.dims;
+        auto in = d[0];
+        auto out = d.back();
+        d.erase(d.begin());
+        d.pop_back();
+        randomize(in, d, out);
+    }
     void randomize(int input, const std::vector<int>& middle, int output)
     {
         m_inner_size = 0;
@@ -515,6 +518,271 @@ struct ReLUCascade
     ModelDims dims() const { return ModelDims{in_size(), (int)ls.size() * 4, out_size()}; }
 };
 
+struct ReLUCascade2
+{
+    struct Eval
+    {
+        vec m_data;
+        int m_inner_size = 0;
+        int m_out_size = 0;
+
+        void realloc(int errs_size, int inner_size, int out_size)
+        {
+            m_inner_size = inner_size;
+            m_out_size = out_size;
+            m_data.realloc_uninitialized(inner_size + out_size + errs_size);
+        }
+
+        vec_slice inner() { return m_data.slice(0, m_inner_size); }
+        vec_slice out() { return m_data.slice(m_inner_size, m_out_size); }
+        vec_slice errs() { return m_data.slice(m_inner_size + m_out_size); }
+    };
+
+    ReLULayer l_out;
+    std::vector<ReLULayer> ls;
+    int m_inner_size = 0;
+
+    int in_size() const { return l_out.in_size() - (int)ls.size() * 4; }
+    int out_size() const { return l_out.out_size(); }
+    int inner_size() const { return m_inner_size; }
+
+    void randomize(const ModelDims& dims) { randomize(dims.dims.at(0), dims.dims.at(1), dims.dims.at(2)); }
+    void randomize(int input, int middle, int output)
+    {
+        middle = (middle / 4) * 4;
+        l_out.randomize(input + middle, output);
+        m_inner_size = l_out.inner_size();
+        ls.resize(middle / 4);
+        if (middle > 0)
+        {
+            m_inner_size += input + middle;
+            for (int i = 0; i < middle / 4; ++i)
+            {
+                ls[i].randomize(input + i * 4, 4);
+                m_inner_size += ls[i].inner_size();
+            }
+        }
+    }
+
+    void backprop_init()
+    {
+        for (auto& l : ls)
+            l.backprop_init();
+        l_out.backprop_init();
+    }
+
+    void calc(Eval& e, vec_slice in)
+    {
+        e.realloc(in_size(), inner_size(), out_size());
+        this->calc(in, e.inner(), e.out());
+    }
+
+    void calc(vec_slice in, vec_slice inner, vec_slice out)
+    {
+        if (ls.size() == 0)
+        {
+            return l_out.calc(in, inner, out);
+        }
+        auto [tmp, a] = inner.split(l_out.in_size());
+        inner = a;
+        tmp.slice(0, in.size()).assign(in);
+        for (auto& l : ls)
+        {
+            auto [cur_inner, new_inner] = inner.split(l.inner_size());
+            auto [cur_in, cur_out] = tmp.split(l.in_size());
+            l.calc(cur_in, cur_inner, cur_out.slice(0, 4));
+            inner = new_inner;
+        }
+        l_out.calc(tmp, inner, out);
+    }
+
+    void backprop(Eval& e, vec_slice in, vec_slice grad) { this->backprop(e.errs(), in, e.inner(), grad); }
+    void backprop(vec_slice errs, vec_slice in, vec_slice inner, vec_slice grad)
+    {
+        if (ls.size() == 0)
+        {
+            l_out.backprop(errs, in, inner, grad);
+        }
+        else
+        {
+            VEC_STACK_VEC(tmp_grad, l_out.in_size());
+            VEC_STACK_VEC(tmp_errs, l_out.in_size() - 4);
+
+            auto [inner_in, x] = inner.split(l_out.in_size());
+            auto [y, l_out_out] = x.rsplit(l_out.inner_size());
+            inner = y;
+
+            l_out.backprop(tmp_grad, inner_in, l_out_out, grad);
+
+            for (intptr_t i = ls.size(); i > 0; --i)
+            {
+                auto& l = ls[i - 1];
+                auto [x, cur_inner] = inner.rsplit(l.inner_size());
+                inner = x;
+                auto [new_grad, cur_grad] = tmp_grad.rsplit(4);
+                l.backprop(tmp_errs, inner_in.slice(0, l.in_size()), cur_inner, cur_grad);
+                tmp_grad = new_grad;
+                tmp_grad.add(tmp_errs);
+                tmp_errs = tmp_errs.slice(0, tmp_errs.size() - 4);
+            }
+            errs.assign(tmp_grad);
+        }
+    }
+    void learn(float learn_rate)
+    {
+        for (auto& l : ls)
+            l.learn(learn_rate);
+        l_out.learn(learn_rate);
+    }
+    void normalize(float learn_rate)
+    {
+        for (auto& l : ls)
+            l.normalize(learn_rate);
+        l_out.normalize(learn_rate);
+    }
+
+    void deserialize(const Value& v)
+    {
+        if (find_or_throw(v, "type").GetString() != std::string_view("ReLUCascade2"))
+            throw "Expected type ReLUCascade2";
+        m_inner_size = find_or_throw(v, "inner_size").GetInt();
+        auto data = find_or_throw(v, "data").GetArray();
+        ls.resize(data.Size());
+        for (unsigned i = 0; i < data.Size(); ++i)
+        {
+            ls[i].deserialize(data[i]);
+        }
+        l_out.deserialize(find_or_throw(v, "l_out"));
+    }
+
+    void serialize(RJWriter& w) const
+    {
+        w.StartObject();
+        w.Key("type");
+        w.String("ReLUCascade2");
+        w.Key("inner_size");
+        w.Int(m_inner_size);
+        w.Key("data");
+        w.StartArray();
+        for (auto&& l : ls)
+            l.serialize(w);
+        w.EndArray();
+        w.Key("l_out");
+        l_out.serialize(w);
+        w.EndObject();
+    }
+
+    ModelDims dims() const { return ModelDims{in_size(), (int)ls.size() * 4, out_size()}; }
+};
+
+struct ReLUAny
+{
+    int k = 0;
+    ReLULayers a;
+    ReLUCascade b;
+    ReLUCascade2 c;
+
+    struct Eval
+    {
+        int k = 0;
+        ReLULayers::Eval a;
+        ReLUCascade::Eval b;
+        ReLUCascade2::Eval c;
+
+        vec_slice inner() { return k == 0 ? a.inner() : (k == 1 ? b.inner() : c.inner()); }
+        vec_slice out() { return k == 0 ? a.out() : (k == 1 ? b.out() : c.out()); }
+        vec_slice errs() { return k == 0 ? a.errs() : (k == 1 ? b.errs() : c.errs()); }
+    };
+
+    int in_size() const
+    {
+        return dispatch([](const auto& x) { return x.in_size(); });
+    }
+    int out_size() const
+    {
+        return dispatch([](const auto& x) { return x.out_size(); });
+    }
+    int inner_size() const
+    {
+        return dispatch([](const auto& x) { return x.inner_size(); });
+    }
+
+    void randomize(int type, const ModelDims& dims)
+    {
+        k = type;
+        return dispatch([&dims](auto& x) { return x.randomize(dims); });
+    }
+
+    void backprop_init()
+    {
+        return dispatch([](auto& x) { return x.backprop_init(); });
+    }
+
+    void calc(Eval& e, vec_slice in)
+    {
+        e.k = k;
+        if (k == 0) return a.calc(e.a, in);
+        if (k == 1) return b.calc(e.b, in);
+        if (k == 2) return c.calc(e.c, in);
+        std::terminate();
+    }
+
+    void backprop(Eval& e, vec_slice in, vec_slice grad)
+    {
+        if (k == 0) return a.backprop(e.a, in, grad);
+        if (k == 1) return b.backprop(e.b, in, grad);
+        if (k == 2) return c.backprop(e.c, in, grad);
+        std::terminate();
+    }
+    void learn(float learn_rate)
+    {
+        return dispatch([learn_rate](auto& x) { return x.learn(learn_rate); });
+    }
+    void normalize(float learn_rate)
+    {
+        return dispatch([learn_rate](auto& x) { return x.normalize(learn_rate); });
+    }
+
+    void deserialize(const Value& v)
+    {
+        auto type = find_or_throw(v, "type").GetString();
+        if (type == std::string_view("RELULayers"))
+            a.deserialize(v);
+        else if (type == std::string_view("ReLUCascade"))
+            b.deserialize(v);
+        else
+            c.deserialize(v);
+    }
+
+    void serialize(RJWriter& w) const
+    {
+        return dispatch([&w](const auto& x) { return x.serialize(w); });
+    }
+
+    ModelDims dims() const
+    {
+        return dispatch([](const auto& x) { return x.dims(); });
+    }
+
+    template<class F>
+    auto dispatch(F f)
+    {
+        if (k == 0) return f(a);
+        if (k == 1) return f(b);
+        if (k == 2) return f(c);
+        std::terminate();
+    }
+
+    template<class F>
+    auto dispatch(F f) const
+    {
+        if (k == 0) return f(a);
+        if (k == 1) return f(b);
+        if (k == 2) return f(c);
+        std::terminate();
+    }
+};
+
 struct PerCardInputModel
 {
     ReLULayers l;
@@ -594,7 +862,7 @@ struct Model final : IModel
     Model(std::string&& s, int i) : IModel(std::move(s), i) { }
 
     ReLULayers b;
-    ReLUCascade l;
+    ReLUAny l;
     Layer p;
 
     PerCardInputModel card_in_model;
@@ -623,7 +891,7 @@ struct Model final : IModel
     struct Eval : IEval
     {
         ReLULayers::Eval b;
-        ReLUCascade::Eval l;
+        ReLUAny::Eval l;
 
         LInput l_input;
         vec l_grad;
@@ -684,10 +952,11 @@ struct Model final : IModel
         auto you_card_in_dims = dims.children.at("you_card_in").dims;
         you_card_in_model.randomize(card_size, you_card_in_dims, card_out_width);
 
-        auto l_dims = dims.children.at("l").dims;
-        auto l3_out_width = l_dims.back();
-        l_dims.pop_back();
-        l.randomize(1 + board_out_width + card_out_width, l_dims.at(0), l3_out_width);
+        auto l_dims = dims.children.at("l");
+        l_dims.dims.resize(3, 8);
+        l_dims.dims[0] = 1 + board_out_width + card_out_width;
+        auto l3_out_width = l_dims.dims[2];
+        l.randomize(1, l_dims);
 
         p.randomize(l3_out_width, 1);
         card_out_model.randomize(l3_out_width + card_out_width, dims.children.at("card_out").dims);
@@ -824,7 +1093,9 @@ struct Model final : IModel
         w.Key("type");
         w.String("Model");
         w.Key("name");
-        w.String(name().c_str());
+        w.String(root_name().c_str());
+        w.Key("id");
+        w.Int(get_id());
         w.Key("b");
         b.serialize(w);
         w.Key("l");
@@ -868,7 +1139,9 @@ std::unique_ptr<IModel> load_model(const std::string& s)
 {
     rapidjson::Document doc;
     doc.Parse(s.c_str(), s.size());
-    auto m = std::make_unique<Model>(doc.FindMember("name")->value.GetString(), doc.FindMember("id")->value.GetInt());
+    auto it_id = doc.FindMember("id");
+    auto m = std::make_unique<Model>(find_or_throw(doc, "name").GetString(),
+                                     it_id == doc.MemberEnd() ? 0 : it_id->value.GetInt());
     m->deserialize(doc);
     return m;
 }

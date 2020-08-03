@@ -30,9 +30,16 @@ API APIGame* alloc_game()
 }
 API APIModel* alloc_model(const char* json)
 {
-    auto r = std::make_unique<APIModel>();
-    r->m = load_model(json);
-    return r.release();
+    try
+    {
+        auto r = std::make_unique<APIModel>();
+        r->m = load_model(json);
+        return r.release();
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
 }
 API void free_game(APIGame* g) { std::unique_ptr<APIGame> u(g); }
 API void free_model(APIModel* m) { std::unique_ptr<APIModel> u(m); }
