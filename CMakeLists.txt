@@ -23,7 +23,7 @@ target_sources(mlcard_objs INTERFACE "vec.h" "model.h" "model.cpp" "game.h" "gam
 target_link_libraries(mlcard_objs INTERFACE fmt::fmt)
 target_include_directories(mlcard_objs INTERFACE ${RAPIDJSON_INCLUDE_DIRS})
 
-add_library(libmlcard MODULE libmlcard.cpp)
+add_library(libmlcard SHARED libmlcard.cpp)
 target_link_libraries(libmlcard PRIVATE mlcard_objs)
 set_target_properties(libmlcard
     PROPERTIES
