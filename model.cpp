@@ -709,7 +709,14 @@ struct ReLUAny
 
     void randomize(int type, const ModelDims& dims)
     {
-        k = type;
+        if (dims.type == "RELULayers")
+            k = 0;
+        else if (dims.type == "ReLUCascade")
+            k = 1;
+        else if (dims.type == "ReLUCascade2")
+            k = 2;
+        else
+            k = type;
         return dispatch([&dims](auto& x) { return x.randomize(dims); });
     }
 
@@ -761,7 +768,11 @@ struct ReLUAny
 
     ModelDims dims() const
     {
-        return dispatch([](const auto& x) { return x.dims(); });
+        auto d = dispatch([](const auto& x) { return x.dims(); });
+        if (k == 0) d.type = "RELULayers";
+        if (k == 1) d.type = "ReLUCascade";
+        if (k == 2) d.type = "ReLUCascade2";
+        return d;
     }
 
     template<class F>

@@ -10,12 +10,34 @@
       </ArrayItems>
     </Expand>
   </Type>
+  <Type Name="Layer">
+    <DisplayString>{{ input={m_input} output={m_output} }}</DisplayString>
+    <Expand>
+      <Item Name="[coefs]" ExcludeView="simple">coefs()</Item>
+      <Item Name="[delta]" ExcludeView="simple">delta()</Item>
+      <Item Name="m_deltas" ExcludeView="simple">m_deltas</Item>
+    </Expand>
+  </Type>
   <Type Name="vec_slice">
     <DisplayString>{{ size={m_len} }}</DisplayString>
     <Expand>
       <Item Name="[size]" ExcludeView="simple">m_len</Item>
       <ArrayItems>
         <Size>m_len</Size>
+        <ValuePointer>m_data</ValuePointer>
+      </ArrayItems>
+    </Expand>
+  </Type>
+  <Type Name="mat_slice">
+    <DisplayString>{{ rows={m_rows} cols={m_cols} }}</DisplayString>
+    <Expand>
+      <Item Name="[rows]" ExcludeView="simple">m_rows</Item>
+      <Item Name="[cols]" ExcludeView="simple">m_cols</Item>
+      <Item Name="[size]" ExcludeView="simple">m_rows*m_cols</Item>
+      <ArrayItems>
+        <Direction>Forward</Direction>
+        <Rank>2</Rank>
+        <Size>$i == 0 ? m_rows : m_cols</Size>
         <ValuePointer>m_data</ValuePointer>
       </ArrayItems>
     </Expand>
@@ -27,7 +49,9 @@
       <Item Name="[cols]" ExcludeView="simple">m_cols</Item>
       <Item Name="[size]" ExcludeView="simple">m_rows*m_cols</Item>
       <ArrayItems>
-        <Size>m_rows*m_cols</Size>
+        <Direction>Backward</Direction>
+        <Rank>2</Rank>
+        <Size>$i == 0 ? m_rows : m_cols</Size>
         <ValuePointer>m_data</ValuePointer>
       </ArrayItems>
     </Expand>
