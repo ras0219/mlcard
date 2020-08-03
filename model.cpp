@@ -78,12 +78,7 @@ struct Layer
 
         for (size_t j = 0; j < m_output; ++j)
         {
-            float acc = r_init[j];
-            for (size_t i = 0; i < m_input - 1; ++i)
-            {
-                acc += coefs().row(i)[j] * input[i];
-            }
-            out[j] = acc;
+            out[j] = r_init[j] + coefs().col(j).slice(0, m_input - 1).dot(input);
         }
 
         out.slice(0, m_min_io).add(input.slice(0, m_min_io));

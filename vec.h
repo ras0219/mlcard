@@ -68,7 +68,7 @@ struct vec_stride_slice_base
 #if !defined(NDEBUG) || defined(VEC_ENABLE_CHECKS)
         if (i >= m_len) std::terminate();
 #endif
-        return m_data[i];
+        return m_data[i * m_stride];
     }
 
 protected:
