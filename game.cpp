@@ -407,6 +407,8 @@ void Game::serialize(RJWriter& w)
         w.Int(p.health);
         w.Key("land");
         w.Int(p.land);
+        w.Key("card_count");
+        w.Int(p.avail.size());
         w.Key("cards");
         w.StartArray();
         for (auto&& c : p.avail)
