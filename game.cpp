@@ -1,4 +1,5 @@
 #include "game.h"
+#include "kv_range.h"
 #include "rjwriter.h"
 #include <cstdlib>
 #include <fmt/format.h>
@@ -55,10 +56,10 @@ void Player::encode(vec_slice x) const
 }
 void Player::encode_cards(vec_slice x) const
 {
-    for (size_t i = 0; i < avail.size(); ++i)
+    for (auto&& [k, v] : kv_range(avail))
     {
-        auto c = x.slice(i * Card::encoded_size, Card::encoded_size);
-        avail[i].encode(c);
+        auto c = x.slice(k * Card::encoded_size, Card::encoded_size);
+        v.encode(c);
     }
 }
 void Player::init(bool p1)
@@ -501,39 +502,39 @@ std::vector<std::string> Game::format_actions()
 {
     std::vector<std::string> actions{"Pass"};
     auto& p = cur_player();
-    for (int i = 0; i < p.cards(); ++i)
+    for (auto&& card : p.avail)
     {
-        if (p.avail[i].type == Card::Type::Land)
+        if (card.type == Card::Type::Land)
         {
             if (played_land)
                 actions.push_back("Pass - Play Land");
             else
                 actions.push_back("Play Land");
         }
-        else if (p.avail[i].type == Card::Type::Artifact)
+        else if (card.type == Card::Type::Artifact)
         {
-            actions.push_back(fmt::format("Play Artifact: {}", artifact_name(p.avail[i].artifact)));
+            actions.push_back(fmt::format("Play Artifact: {}", artifact_name(card.artifact)));
         }
         else
         {
             const char* prefix = "Play";
-            if (p.avail[i].value > mana && played_land) prefix = "Pass -";
-            const char* suffix = p.avail[i].value > mana ? " as Land" : "";
-            if (p.avail[i].type == Card::Type::Creature)
+            if (card.value > mana && played_land) prefix = "Pass -";
+            const char* suffix = card.value > mana ? " as Land" : "";
+            if (card.type == Card::Type::Creature)
             {
-                actions.push_back(fmt::format("{} Creature {}{}", prefix, p.avail[i].value, suffix));
+                actions.push_back(fmt::format("{} Creature {}{}", prefix, card.value, suffix));
             }
-            else if (p.avail[i].type == Card::Type::Direct)
+            else if (card.type == Card::Type::Direct)
             {
-                actions.push_back(fmt::format("{} Damage {}{}", prefix, p.avail[i].value, suffix));
+                actions.push_back(fmt::format("{} Damage {}{}", prefix, card.value, suffix));
             }
-            else if (p.avail[i].type == Card::Type::Heal)
+            else if (card.type == Card::Type::Heal)
             {
-                actions.push_back(fmt::format("{} Heal {}{}", prefix, p.avail[i].value, suffix));
+                actions.push_back(fmt::format("{} Heal {}{}", prefix, card.value, suffix));
             }
-            else if (p.avail[i].type == Card::Type::Draw3)
+            else if (card.type == Card::Type::Draw3)
             {
-                actions.push_back(fmt::format("{} Draw {}{}", prefix, p.avail[i].value, suffix));
+                actions.push_back(fmt::format("{} Draw {}{}", prefix, card.value, suffix));
             }
             else
                 std::terminate();

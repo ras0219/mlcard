@@ -390,7 +390,7 @@ struct ReLUCascade
     int out_size() const { return l_out.out_size(); }
     int inner_size() const { return m_inner_size; }
 
-    void randomize(const ModelDims& dims) { randomize(dims.dims.at(0), dims.dims.at(1), dims.dims.at(2)); }
+    void randomize(const ModelDims& dims) { randomize(dims.dims.at(0), dims.dims.at(1), dims.dims.back()); }
     void randomize(int input, int middle, int output)
     {
         middle = (middle / 4) * 4;
@@ -546,7 +546,7 @@ struct ReLUCascade2
     int out_size() const { return l_out.out_size(); }
     int inner_size() const { return m_inner_size; }
 
-    void randomize(const ModelDims& dims) { randomize(dims.dims.at(0), dims.dims.at(1), dims.dims.at(2)); }
+    void randomize(const ModelDims& dims) { randomize(dims.dims.at(0), dims.dims.at(1), dims.dims.back()); }
     void randomize(int input, int middle, int output)
     {
         middle = (middle / 4) * 4;
@@ -872,7 +872,7 @@ struct Model final : IModel
 {
     Model(std::string&& s, int i) : IModel(std::move(s), i) { }
 
-    ReLULayers b;
+    ReLUAny b;
     ReLUAny l;
     Layer p;
 
@@ -901,7 +901,7 @@ struct Model final : IModel
 
     struct Eval : IEval
     {
-        ReLULayers::Eval b;
+        ReLUAny::Eval b;
         ReLUAny::Eval l;
 
         LInput l_input;
@@ -950,10 +950,10 @@ struct Model final : IModel
 
     void randomize(int board_size, int card_size, const ModelDims& dims)
     {
-        auto b_dims = dims.children.at("b").dims;
-        auto board_out_width = b_dims.back();
-        b_dims.pop_back();
-        b.randomize(board_size, b_dims, board_out_width);
+        auto b_dims = dims.children.at("b");
+        b_dims.dims.insert(b_dims.dims.begin(), board_size);
+        auto board_out_width = b_dims.dims.back();
+        b.randomize(0, b_dims);
 
         auto card_in_dims = dims.children.at("card_in").dims;
         card_out_width = card_in_dims.back();
@@ -964,10 +964,9 @@ struct Model final : IModel
         you_card_in_model.randomize(card_size, you_card_in_dims, card_out_width);
 
         auto l_dims = dims.children.at("l");
-        l_dims.dims.resize(3, 8);
-        l_dims.dims[0] = 1 + board_out_width + card_out_width;
-        auto l3_out_width = l_dims.dims[2];
-        l.randomize(1, l_dims);
+        l_dims.dims.insert(l_dims.dims.begin(), 1 + board_out_width + card_out_width);
+        auto l3_out_width = l_dims.dims.back();
+        l.randomize(0, l_dims);
 
         p.randomize(l3_out_width, 1);
         card_out_model.randomize(l3_out_width + card_out_width, dims.children.at("card_out").dims);

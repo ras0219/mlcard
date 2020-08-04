@@ -177,10 +177,10 @@ void Worker::work()
             m->learn(m_learn_rate);
             m->backprop_init();
         }
-        if (learn_tick % 10000 == 9999) m->normalize(m_learn_rate * 1e-9f);
+        if (learn_tick % 200 == 199) m->normalize(m_learn_rate * 1e-9f);
 
         update_tick++;
-        if (update_tick >= 100)
+        if (update_tick >= 200)
         {
             update_tick = 0;
             std::lock_guard<std::mutex> lk(m_mutex);

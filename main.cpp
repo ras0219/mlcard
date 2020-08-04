@@ -3,6 +3,7 @@
 
 #include "ai_play.h"
 #include "game.h"
+#include "kv_range.h"
 #include "model.h"
 #include "modeldims.h"
 #include "rjwriter.h"
@@ -28,8 +29,10 @@
 #include <FL/Fl_Valuator.H>
 #include <FL/Fl_Widget.H>
 #include <FL/fl_draw.H>
+#include <algorithm>
 #include <atomic>
 #include <condition_variable>
+#include <execution>
 #include <fmt/format.h>
 #include <fstream>
 #include <memory>
@@ -115,9 +118,8 @@ struct Graph : Fl_Widget
         }
 
         auto color = fl_color();
-        for (int x = 0; x < valss.size(); ++x)
+        for (auto&& [x, vals] : kv_range(valss))
         {
-            auto&& vals = valss[x];
             if (vals.size() < 2) return;
             auto inc_w = this->w() * 1.0 / (vals.size() - 1);
             if (x == 0)
@@ -408,9 +410,9 @@ struct Game_Group : Fl_Group
         m_gamelog.add(("@." + g.format()).c_str());
         m_turn_viewer.m_actions.clear();
         auto actions = g.format_actions();
-        for (size_t i = 0; i < actions.size(); ++i)
+        for (auto&& [k, v] : kv_range(actions))
         {
-            m_turn_viewer.m_actions.add(actions[i].c_str(), (void*)i);
+            m_turn_viewer.m_actions.add(v.c_str(), (void*)k);
         }
         m_turn_viewer.m_cur_turn.clear();
         m_turn_viewer.m_cur_turn.format_char(0);
@@ -1111,13 +1113,11 @@ struct Tournament_Group : Fl_Group
 
         void work()
         {
+            std::mutex local_mutex;
             std::vector<std::vector<WinStats>> local_data;
             std::vector<std::shared_ptr<IModel>> local_models;
-            int i = 0;
-            int j = 0;
             while (!exit_worker)
             {
-                if (restart || !updated || paused)
                 {
                     std::unique_lock lk(m);
                     m_cv.wait(lk, [this]() { return !paused; });
@@ -1127,7 +1127,7 @@ struct Tournament_Group : Fl_Group
                         local_models = models;
                         restart = false;
                     }
-                    else if (!updated)
+                    else
                     {
                         data = local_data;
                         models = local_models;
@@ -1135,81 +1135,64 @@ struct Tournament_Group : Fl_Group
                     }
                 }
 
-                bool ran_any = [&]() {
-                    if (local_data.size() == 0) return false;
+                int sz = (int)local_models.size();
 
-                    auto try_run = [&](int i, int j) {
-                        static constexpr auto max_samples = 250;
-                        auto& ld = local_data[i][j];
-                        if (ld.p1 + ld.p2 + ld.tie < max_samples)
+                std::for_each(int_iterator{0}, int_iterator{sz * sz}, [&](int n) {
+                    static constexpr auto max_samples = 250;
+                    int i = n / sz;
+                    int j = n % sz;
+                    auto& ld = local_data[i][j];
+                    std::unique_lock guard(local_mutex);
+                    while (ld.p1 + ld.p2 + ld.tie < max_samples)
+                    {
+                        guard.unlock();
+                        if (restart) return;
+                        if (paused)
                         {
-                            auto [x, y] = run_100(*local_models[i], *local_models[j]);
-                            ld.p1 += x;
-                            ld.p2 += y;
-                            ld.tie += 100 - x - y;
-                            return true;
+                            std::unique_lock lk(m);
+                            m_cv.wait(lk, [this]() { return !paused; });
                         }
-                        return false;
-                    };
-
-                    int init_i = i % local_data.size(), init_j = j % local_data.size();
-
-                    for (++i; i < local_data.size(); ++i)
-                    {
-                        if (try_run(i, j)) return true;
-                    }
-
-                    for (++j; j < local_data.size(); ++j)
-                    {
-                        for (i = 0; i < local_data.size(); ++i)
+                        auto [x, y] = run_100(*local_models[i], *local_models[j]);
+                        guard.lock();
+                        ld.p1 += x;
+                        ld.p2 += y;
+                        ld.tie += 100 - x - y;
+                        if (!updated)
                         {
-                            if (try_run(i, j)) return true;
-                        }
-                    }
-
-                    for (j = 0; j < init_j; ++j)
-                    {
-                        for (i = 0; i < local_data.size(); ++i)
-                        {
-                            if (try_run(i, j)) return true;
+                            std::unique_lock lk(m);
+                            data = local_data;
+                            models = local_models;
+                            updated = true;
                         }
                     }
+                });
 
-                    for (i = 0; i <= init_i; ++i)
-                    {
-                        if (try_run(i, j)) return true;
-                    }
+                if (restart) continue;
 
-                    return false;
-                }();
+                // All competitions have sufficient samples. Update models.
+                static const size_t target_tournament = 12; // must be larger than s_workers.size()
+                auto new_size = std::min(target_tournament, s_workers.size() + local_models.size());
 
-                if (!ran_any)
+                if (target_tournament < s_workers.size() + local_models.size())
                 {
-                    // All competitions have sufficient samples. Update models.
-                    static const size_t target_tournament = 12; // must be larger than s_workers.size()
-                    auto new_size = std::min(target_tournament, s_workers.size() + local_models.size());
-
-                    if (target_tournament < s_workers.size() + local_models.size())
-                    {
-                        auto wrs = winrates(local_data);
-                        std::sort(wrs.begin(), wrs.end());
-                        auto num_to_erase = s_workers.size() + local_models.size() - target_tournament;
-                        std::vector<bool> to_erase(local_models.size(), false);
-                        for (int i = 0; i < num_to_erase; ++i)
-                            to_erase[wrs[i].second] = true;
-                        erase_ns(local_data, to_erase);
-                        erase_ns(local_models, to_erase);
-                        for (auto&& x : local_data)
-                            erase_ns(x, to_erase);
-                    }
-
+                    auto wrs = winrates(local_data);
+                    std::sort(wrs.begin(), wrs.end());
+                    auto num_to_erase = s_workers.size() + local_models.size() - target_tournament;
+                    std::vector<bool> to_erase(local_models.size(), false);
+                    for (int i = 0; i < num_to_erase; ++i)
+                        to_erase[wrs[i].second] = true;
+                    erase_ns(local_data, to_erase);
+                    erase_ns(local_models, to_erase);
                     for (auto&& x : local_data)
-                        x.resize(new_size);
-                    for (size_t i = local_data.size(); i < new_size; ++i)
-                        local_data.emplace_back(new_size);
-                    for (auto&& w : s_workers)
-                        local_models.push_back(w->clone_model());
+                        erase_ns(x, to_erase);
                 }
+
+                for (auto&& x : local_data)
+                    x.resize(new_size);
+                for (size_t i = local_data.size(); i < new_size; ++i)
+                    local_data.emplace_back(new_size);
+                for (auto&& w : s_workers)
+                    local_models.push_back(w->clone_model());
             }
         }
 
@@ -1350,12 +1333,18 @@ int main(int argc, char* argv[])
     s_workers.push_back(std::make_unique<Worker>());
     s_workers[0]->replace_model(make_model(default_model_dims(), "bgA"));
     auto bgB = default_model_dims();
-    bgB.children["b"].dims = {40, 40, 40};
-    s_workers[1]->replace_model(make_model(default_model_dims(), "bgB"));
-    s_workers[2]->replace_model(make_model(medium_model_dims(), "llA"));
-    auto llB = default_model_dims();
-    llB.children["card_out"].dims = {50, 40, 30};
-    s_workers[3]->replace_model(make_model(llB, "llB"));
+    bgB.children["card_out"].dims = {40, 30, 20};
+    bgB.children["l"].dims = {40, 10};
+    bgB.children["l"].type = "ReLUCascade";
+    s_workers[1]->replace_model(make_model(bgB, "clC432/4/1"));
+    bgB = default_model_dims();
+    bgB.children["l"].dims = {40, 20};
+    bgB.children["l"].type = "ReLUCascade";
+    s_workers[2]->replace_model(make_model(bgB, "lC40/20"));
+    bgB = default_model_dims();
+    bgB.children["l"].dims = {48, 30};
+    bgB.children["l"].type = "ReLUCascade";
+    s_workers[3]->replace_model(make_model(bgB, "lC48/30"));
 
     auto win = std::make_unique<Fl_Double_Window>(490, 400, "Worker 0 - MLCard");
     win->begin();
