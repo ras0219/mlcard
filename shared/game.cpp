@@ -374,7 +374,7 @@ std::vector<std::string> Game::format_public_lines() const
     };
 
     format_player('1', p1);
-    ret.push_back("");
+    ret.push_back(" ");
     format_player('2', p2);
 
     return ret;
@@ -409,7 +409,7 @@ void Game::serialize(RJWriter& w)
         w.Key("land");
         w.Int(p.land);
         w.Key("card_count");
-        w.Int(p.avail.size());
+        w.Int((int)p.avail.size());
         w.Key("cards");
         w.StartArray();
         for (auto&& c : p.avail)

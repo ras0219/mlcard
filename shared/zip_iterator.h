@@ -30,7 +30,12 @@ struct zip_iterator
     zip_iterator operator+(int n) const { return {i1 + n, i2 + n}; }
     zip_iterator& operator-=(int n) { return i1 -= n, i2 -= n, *this; }
     zip_iterator operator-(int n) const { return {i1 - n, i2 - n}; }
-    difference_type operator-(zip_iterator n) const { return std::min(i1 - n.i1, i2 - n.i2); }
+    difference_type operator-(zip_iterator n) const
+    {
+        auto d1 = i1 - n.i1;
+        auto d2 = i2 - n.i2;
+        return d1 < d2 ? d1 : d2;
+    }
 
     reference operator*() const { return {*i1, *i2}; }
     reference operator[](difference_type i) const { return {i1[i], i2[i]}; }

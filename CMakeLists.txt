@@ -5,6 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 
 set(CMAKE_TOOLCHAIN_FILE ${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake
   CACHE STRING "Vcpkg toolchain file")
+set(ENV{VCPKG_OVERLAY_PORTS} "${CMAKE_CURRENT_SOURCE_DIR}/overlay-ports")
 
 project(mlcard CXX)
 
@@ -18,12 +19,15 @@ find_package(RapidJSON CONFIG REQUIRED)
 find_package(FLTK CONFIG REQUIRED)
 find_package(fmt CONFIG REQUIRED)
 
-add_library(mlcard_objs INTERFACE)
-target_sources(mlcard_objs INTERFACE "vec.h" "model.h" "model.cpp" "game.h" "game.cpp" "ai_play.h" "rjwriter.h" "modeldims.h" "worker.h" "worker.cpp")
-target_link_libraries(mlcard_objs INTERFACE fmt::fmt)
-target_include_directories(mlcard_objs INTERFACE ${RAPIDJSON_INCLUDE_DIRS})
+file(GLOB SHARED_SRC shared/*)
 
-add_library(libmlcard SHARED libmlcard.cpp)
+add_library(mlcard_objs INTERFACE)
+target_sources(mlcard_objs INTERFACE ${SHARED_SRC})
+target_link_libraries(mlcard_objs INTERFACE fmt::fmt)
+target_include_directories(mlcard_objs INTERFACE shared ${RAPIDJSON_INCLUDE_DIRS})
+
+file(GLOB LIB_SRC lib/*)
+add_library(libmlcard SHARED ${LIB_SRC})
 target_link_libraries(libmlcard PRIVATE mlcard_objs)
 set_target_properties(libmlcard
     PROPERTIES
@@ -31,7 +35,8 @@ set_target_properties(libmlcard
     PREFIX ""
 )
 
-add_executable(mlcard "main.cpp")
+file(GLOB BIN_SRC bin/*)
+add_executable(mlcard ${BIN_SRC})
 set_property(TARGET mlcard PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 target_link_libraries(mlcard PRIVATE fltk mlcard_objs)
 target_include_directories(mlcard PRIVATE ${RAPIDJSON_INCLUDE_DIRS})

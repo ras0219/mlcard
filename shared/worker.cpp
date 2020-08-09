@@ -75,6 +75,13 @@ std::string Worker::model_name()
     return m_model ? m_model->name() : "none";
 }
 
+void Worker::replace_compete_baseline(std::shared_ptr<IModel> m)
+{
+    std::lock_guard lk(m_mutex);
+    m_compete_baseline = std::move(m);
+    m_compete_baseline_changed = true;
+}
+
 void Worker::serialize_model(struct RJWriter& w)
 {
     std::lock_guard<std::mutex> lk(m_mutex);
@@ -183,17 +190,30 @@ void Worker::work()
         if (update_tick >= 200)
         {
             update_tick = 0;
-            std::lock_guard<std::mutex> lk(m_mutex);
-            if (m_replace_model)
             {
-                m = m_model->clone();
-                m_replace_model = false;
+                std::lock_guard<std::mutex> lk(m_mutex);
+                if (m_replace_model)
+                {
+                    m = m_model->clone();
+                    m_replace_model = false;
+                }
+                else
+                {
+                    m->increment_name();
+                    delete m_model;
+                    m_model = m->clone().release();
+                }
             }
-            else
+            if (m_compete_baseline_changed)
             {
-                m->increment_name();
-                delete m_model;
-                m_model = m->clone().release();
+                std::lock_guard lk(m_mutex);
+                m_compete_baseline_changed = false;
+                m_local_compete_baseline = std::move(m_compete_baseline);
+            }
+
+            if (m_past_models.size() < compete_size)
+            {
+                m_past_models.push_back(m->clone());
             }
         }
         ++m_trials;
