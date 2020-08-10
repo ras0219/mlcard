@@ -16,7 +16,7 @@ struct Worker
 {
     std::atomic<int> m_trials = 0;
     std::atomic<float> m_err[200] = {};
-    std::atomic<float> m_learn_rate = 0.0002;
+    std::atomic<float> m_learn_rate = 0.004;
     static constexpr size_t compete_size = 200;
     std::atomic<float> m_compete_results[compete_size] = {};
 
@@ -32,17 +32,16 @@ struct Worker
 
 private:
     void work();
+    void compete_baseline_work();
 
-    std::thread m_th;
+    std::thread m_th, m_compete_th;
     std::atomic<bool> m_worker_exit = false;
 
     std::vector<std::shared_ptr<IModel>> m_past_models;
-    size_t m_compete_idx;
-    std::shared_ptr<IModel> m_local_compete_baseline;
+    std::condition_variable m_past_models_cv;
 
     std::mutex m_mutex;
     struct IModel* m_model = nullptr;
     bool m_replace_model = false;
     std::shared_ptr<IModel> m_compete_baseline;
-    std::atomic<bool> m_compete_baseline_changed = false;
 };

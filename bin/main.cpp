@@ -169,9 +169,19 @@ struct MLStats_Group : Fl_Group
             m_error_graph.redraw();
 
             m_compete.m_graph.valss[0].clear();
-            std::copy(std::begin(s_workers[0]->m_compete_results),
-                      std::end(s_workers[0]->m_compete_results),
-                      std::back_inserter(m_compete.m_graph.valss[0]));
+            m_compete.m_graph.valss[1].clear();
+            m_compete.m_graph.valss[2].clear();
+            float last_v[4] = {};
+            for (auto&& [k, v] : kv_range(s_workers[0]->m_compete_results))
+            {
+                last_v[3] = last_v[2];
+                last_v[2] = last_v[1];
+                last_v[1] = last_v[0];
+                last_v[0] = v;
+                m_compete.m_graph.valss[0].push_back(last_v[0]);
+                if (k > 0) m_compete.m_graph.valss[1].push_back((last_v[0] + last_v[1]) / 2);
+                if (k > 2) m_compete.m_graph.valss[2].push_back((last_v[0] + last_v[1] + last_v[2] + last_v[3]) / 4);
+            }
             m_compete.m_graph.damage(FL_DAMAGE_ALL);
             m_compete.m_graph.redraw();
 
@@ -187,7 +197,8 @@ struct MLStats_Group : Fl_Group
             , m_graph(x, y + 20, w, h - 20, "Compete")
         {
             m_choice.m.callback(thunkv<Compete, &Compete::cb_OnChoice>, this);
-            m_graph.valss.resize(1);
+            m_graph.valss.resize(3);
+            m_graph.max_y = 1.0f;
             this->resizable(m_graph);
             this->end();
         }
@@ -808,7 +819,8 @@ struct Manager_Window : Fl_Double_Window
         , m_tourny(w / 2, h / 2, w / 2, h / 2)
         , m_modal_rename("Rename Model")
     {
-        m_menu_bar.menu(s_menu_items);
+        m_menu_bar.m.menu(s_menu_items);
+        m_menu_bar.resizable(nullptr);
         m_modal_rename.on_submit(thunkv<Manager_Window, &Manager_Window::cb_Rename_Ok>, this);
         m_workers.child().m_freeze.callback((Fl_Callback*)::thunkv<Manager_Window, &Manager_Window::cb_Freeze>, this);
         m_workers.child().m_thaw.callback((Fl_Callback*)::thunkv<Manager_Window, &Manager_Window::cb_Thaw>, this);
@@ -825,7 +837,7 @@ struct Manager_Window : Fl_Double_Window
     void cb_show_worker0() { s_windows.worker0->show(); }
     void cb_show_explorer() { s_mexp->show(); }
 
-    Fl_Menu_Bar m_menu_bar;
+    Margins<Fl_Menu_Bar, 0, 0> m_menu_bar;
     Margins<Fl_Multi_Browser, 10, 35, 5, 25> m_models;
     Margins<Workers_Browser, 5, 35, 10, 5> m_workers;
     Margins<Tournament_Browser, 5, 5, 10, 10> m_tourny;

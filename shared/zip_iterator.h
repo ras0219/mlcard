@@ -3,16 +3,18 @@
 #include <iterator>
 #include <utility>
 
+template<class Iter>
+using reference_type = decltype((*std::declval<Iter>()));
+
 template<class I1, class I2>
 struct zip_iterator
 {
     zip_iterator() = default;
     zip_iterator(I1 i1, I2 i2) : i1(std::move(i1)), i2(std::move(i2)) { }
     using iterator_category = typename I1::iterator_category;
-    using value_type = std::pair<typename I1::value_type, typename I2::value_type>;
     using difference_type = typename I1::difference_type;
     using pointer = void;
-    using reference = std::pair<typename I1::reference, typename I2::reference>;
+    using reference = std::pair<reference_type<I1>, reference_type<I2>>;
 
     zip_iterator& operator++() { return ++i1, ++i2, *this; }
     zip_iterator operator++(int)

@@ -80,7 +80,10 @@ void Worker::replace_compete_baseline(std::shared_ptr<IModel> m)
 {
     std::lock_guard lk(m_mutex);
     m_compete_baseline = std::move(m);
-    m_compete_baseline_changed = true;
+    if (!m_compete_th.joinable())
+    {
+        m_compete_th = std::thread(&Worker::compete_baseline_work, this);
+    }
 }
 
 void Worker::serialize_model(struct RJWriter& w)
@@ -94,6 +97,11 @@ void Worker::join()
 {
     m_worker_exit = true;
     m_th.join();
+    {
+        std::lock_guard lk(m_mutex);
+        m_past_models_cv.notify_one();
+    }
+    if (m_compete_th.joinable()) m_compete_th.join();
 }
 
 #if defined(_WIN32)
@@ -111,11 +119,13 @@ void Worker::work()
     int update_tick = 0;
     int learn_tick = 0;
     int i_err = 0;
+    size_t i_compete_model = 0;
     std::unique_ptr<IModel> m;
     {
         std::lock_guard<std::mutex> lk(m_mutex);
         m = m_model->clone();
         m_replace_model = false;
+        m_past_models.resize(compete_size);
     }
     Game g;
     unsigned int turn_count = 0;
@@ -123,8 +133,6 @@ void Worker::work()
     turns.resize(40);
 
     float total_error = 0.0f;
-
-    size_t i_compete_model = 0;
 
     m->backprop_init();
 
@@ -190,7 +198,7 @@ void Worker::work()
         if (learn_tick % 200 == 199) m->normalize(m_learn_rate * 1e-9f);
 
         update_tick++;
-        if (update_tick >= 500)
+        if (update_tick >= 300)
         {
             update_tick = 0;
             {
@@ -206,34 +214,59 @@ void Worker::work()
                     delete m_model;
                     m_model = m->clone().release();
                 }
-            }
-            if (m_compete_baseline_changed)
-            {
-                std::lock_guard lk(m_mutex);
-                m_compete_baseline_changed = false;
-                m_local_compete_baseline = std::move(m_compete_baseline);
-                for (auto&& [k, v] : kv_range(m_past_models))
-                {
-                    auto [w, l] = run_n(*v, *m_local_compete_baseline, 50);
-                    auto [l2, w2] = run_n(*m_local_compete_baseline, *v, 50);
-                    m_compete_results[k] = (w + w2) / 100.0f;
-                }
-            }
-
-            if (m_past_models.size() < compete_size)
-                m_past_models.push_back(m->clone());
-            else
                 m_past_models[i_compete_model] = m->clone();
-
-            if (m_local_compete_baseline)
-            {
-                auto [w, l] = run_n(*m, *m_local_compete_baseline, 50);
-                auto [l2, w2] = run_n(*m_local_compete_baseline, *m, 50);
-                m_compete_results[i_compete_model] = (w + w2) / 100.0f;
+                m_past_models_cv.notify_one();
             }
             i_compete_model++;
             i_compete_model %= compete_size;
         }
         ++m_trials;
+    }
+}
+void Worker::compete_baseline_work()
+{
+    std::vector<std::shared_ptr<IModel>> past_models_copy(compete_size);
+    std::shared_ptr<IModel> compete_baseline;
+    while (true)
+    {
+        std::unique_lock lk(m_mutex);
+        if (m_worker_exit) return;
+        m_past_models_cv.wait(lk);
+        if (m_worker_exit) return;
+
+        intptr_t i = 0;
+        if (m_compete_baseline)
+        {
+            compete_baseline = std::move(m_compete_baseline);
+            auto m = m_past_models[0];
+            lk.unlock();
+            past_models_copy.assign(compete_size, nullptr);
+            past_models_copy[0] = std::move(m);
+        }
+        else
+        {
+            auto [it1, it2] = std::mismatch(
+                m_past_models.begin(), m_past_models.end(), past_models_copy.begin(), past_models_copy.end());
+            if (it2 != past_models_copy.end()) *it2 = *it1;
+            lk.unlock();
+            i = it2 - past_models_copy.begin();
+        }
+
+        if (i < past_models_copy.size() && past_models_copy[i])
+        {
+            auto wins = 0;
+            auto losses = 0;
+            for (int x = 0; x < 10; ++x)
+            {
+                auto [w, l] = run_n(*past_models_copy[i], *compete_baseline, 10);
+                auto [l2, w2] = run_n(*compete_baseline, *past_models_copy[i], 10);
+                wins += w + w2;
+                losses += l + l2;
+                if (wins + losses == 0)
+                    m_compete_results[i] = 0;
+                else
+                    m_compete_results[i] = wins * 1.0f / (wins + losses);
+            }
+        }
     }
 }
