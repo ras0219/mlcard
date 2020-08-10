@@ -1,6 +1,7 @@
 #include "worker.h"
 #include "ai_play.h"
 #include "game.h"
+#include "kv_range.h"
 #include "model.h"
 
 static unsigned int play_game(Game& g, IModel& m, std::vector<Turn>& turns)
@@ -123,6 +124,8 @@ void Worker::work()
 
     float total_error = 0.0f;
 
+    size_t i_compete_model = 0;
+
     m->backprop_init();
 
     while (!m_worker_exit)
@@ -187,7 +190,7 @@ void Worker::work()
         if (learn_tick % 200 == 199) m->normalize(m_learn_rate * 1e-9f);
 
         update_tick++;
-        if (update_tick >= 200)
+        if (update_tick >= 500)
         {
             update_tick = 0;
             {
@@ -209,12 +212,27 @@ void Worker::work()
                 std::lock_guard lk(m_mutex);
                 m_compete_baseline_changed = false;
                 m_local_compete_baseline = std::move(m_compete_baseline);
+                for (auto&& [k, v] : kv_range(m_past_models))
+                {
+                    auto [w, l] = run_n(*v, *m_local_compete_baseline, 50);
+                    auto [l2, w2] = run_n(*m_local_compete_baseline, *v, 50);
+                    m_compete_results[k] = (w + w2) / 100.0f;
+                }
             }
 
             if (m_past_models.size() < compete_size)
-            {
                 m_past_models.push_back(m->clone());
+            else
+                m_past_models[i_compete_model] = m->clone();
+
+            if (m_local_compete_baseline)
+            {
+                auto [w, l] = run_n(*m, *m_local_compete_baseline, 50);
+                auto [l2, w2] = run_n(*m_local_compete_baseline, *m, 50);
+                m_compete_results[i_compete_model] = (w + w2) / 100.0f;
             }
+            i_compete_model++;
+            i_compete_model %= compete_size;
         }
         ++m_trials;
     }

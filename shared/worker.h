@@ -18,7 +18,7 @@ struct Worker
     std::atomic<float> m_err[200] = {};
     std::atomic<float> m_learn_rate = 0.0002;
     static constexpr size_t compete_size = 200;
-    std::atomic<float> m_compete_results[compete_size * 2] = {};
+    std::atomic<float> m_compete_results[compete_size] = {};
 
     void replace_model(std::unique_ptr<struct IModel> model);
     std::unique_ptr<struct IModel> clone_model();

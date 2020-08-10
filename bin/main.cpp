@@ -89,7 +89,8 @@ struct MLStats_Group : Fl_Group
         , m_trialsPerSec(x + 350 + 20, y, 75, 20, "Trials/Second")
         , m_FPS(x + 200, y, 70, 20, "FPS")
         , m_learn_rate(x, y + 44, w, 20, "Learning Rate")
-        , m_error_graph(x, y + 82, w, h - 82, "Error")
+        , m_error_graph(x, y + 82, w, (h - 82) / 2, "Error")
+        , m_compete(x, y + 82 + (h - 82) / 2, w, (h - 82) / 2)
         , m_resize_box(x + w / 2, y + 82, 1, h - 82)
     {
         m_learn_rate.step(0.00001, 0.0001);
@@ -167,9 +168,40 @@ struct MLStats_Group : Fl_Group
             m_error_graph.damage(FL_DAMAGE_ALL);
             m_error_graph.redraw();
 
+            m_compete.m_graph.valss[0].clear();
+            std::copy(std::begin(s_workers[0]->m_compete_results),
+                      std::end(s_workers[0]->m_compete_results),
+                      std::back_inserter(m_compete.m_graph.valss[0]));
+            m_compete.m_graph.damage(FL_DAMAGE_ALL);
+            m_compete.m_graph.redraw();
+
             previousTrials_value = trials;
         }
     }
+
+    struct Compete : Fl_Group
+    {
+        Compete(int x, int y, int w, int h, const char* label = 0)
+            : Fl_Group(x, y, w, h, label)
+            , m_choice(x, y, w, 20, "Compete Baseline")
+            , m_graph(x, y + 20, w, h - 20, "Compete")
+        {
+            m_choice.m.callback(thunkv<Compete, &Compete::cb_OnChoice>, this);
+            m_graph.valss.resize(1);
+            this->resizable(m_graph);
+            this->end();
+        }
+
+        void cb_OnChoice()
+        {
+            auto v = m_choice.m.value();
+            if (0 <= v && v < s_models_list.models.size())
+                s_workers[0]->replace_compete_baseline(s_models_list.models[v]);
+        }
+
+        Margins<Fl_Choice, 150, 0, 0> m_choice;
+        Graph m_graph;
+    };
 
     Fl_Output m_err;
     Fl_Output m_trials;
@@ -177,6 +209,7 @@ struct MLStats_Group : Fl_Group
     Fl_Output m_FPS;
     Fl_Counter m_learn_rate;
     Graph m_error_graph;
+    Compete m_compete;
     Fl_Box m_resize_box;
 };
 
@@ -321,7 +354,7 @@ struct Game_Group : Fl_Group
         m_ai_plays_p2.callback([](Fl_Widget* w, void*) { ((Game_Group*)w->parent())->update_game(); });
         m_new_game.callback([](Fl_Widget* w, void*) {
             auto& self = *(Game_Group*)w->parent();
-            if (0 < self.m_ai_choice.value() || self.m_ai_choice.value() >= s_models_list.models.size())
+            if (0 > self.m_ai_choice.value() || self.m_ai_choice.value() >= s_models_list.models.size())
                 self.cur_model = s_workers[0]->clone_model();
             else
                 self.cur_model = s_models_list.models[self.m_ai_choice.value()]->clone();
@@ -971,7 +1004,7 @@ struct Tournament_Group : Fl_Group
                             std::unique_lock lk(m);
                             m_cv.wait(lk, [this]() { return !paused; });
                         }
-                        auto [x, y] = run_100(*local_models[i], *local_models[j]);
+                        auto [x, y] = run_n(*local_models[i], *local_models[j], 100);
                         guard.lock();
                         ld.p1 += x;
                         ld.p2 += y;
@@ -1013,48 +1046,6 @@ struct Tournament_Group : Fl_Group
                 for (auto&& w : s_workers)
                     local_models.push_back(w->clone_model());
             }
-        }
-
-        std::pair<int, int> run_100(IModel& m1, IModel& m2)
-        {
-            Game g;
-            std::vector<Turn> turns;
-            int p1_wins = 0;
-            int p2_wins = 0;
-
-            for (int x = 0; x < 100; ++x)
-            {
-                g.init();
-                turns.clear();
-                turns.reserve(40);
-
-                while (g.cur_result() == Game::Result::playing)
-                {
-                    turns.emplace_back();
-                    auto& turn = turns.back();
-                    turn.input = g.encode();
-                    if (g.player2_turn)
-                    {
-                        turn.eval = m2.make_eval();
-                        m2.calc(*turn.eval, turn.input, false);
-                    }
-                    else
-                    {
-                        turn.eval = m1.make_eval();
-                        m1.calc(*turn.eval, turn.input, false);
-                    }
-
-                    // choose action to take
-                    turn.take_ai_action();
-
-                    g.advance(turn.chosen_action);
-                }
-                if (g.cur_result() == Game::Result::p1_win)
-                    ++p1_wins;
-                else if (g.cur_result() == Game::Result::p2_win)
-                    ++p2_wins;
-            }
-            return {p1_wins, p2_wins};
         }
 
         std::atomic<bool> updated = false;
@@ -1139,25 +1130,31 @@ std::string escape_menu_item(const std::string& str)
 
 void ModelsList::push_back(std::shared_ptr<IModel> m)
 {
-    s_gamegroup->m_ai_choice.add(escape_menu_item(m->name()).c_str());
+    auto n = escape_menu_item(m->name());
+    s_gamegroup->m_ai_choice.add(n.c_str());
+    s_windows.worker0->group.m_compete.m_choice.m.add(n.c_str());
     s_mwin->m_models.child().add(m->name().c_str());
     models.push_back(std::move(m));
 }
 void ModelsList::replace(int i, std::shared_ptr<IModel> m)
 {
-    s_gamegroup->m_ai_choice.replace(i, escape_menu_item(m->name()).c_str());
+    auto n = escape_menu_item(m->name());
+    s_gamegroup->m_ai_choice.replace(i, n.c_str());
+    s_windows.worker0->group.m_compete.m_choice.m.replace(i, n.c_str());
     s_mwin->m_models.child().text(i + 1, m->name().c_str());
     models[i] = std::move(m);
 }
 void ModelsList::erase(int i)
 {
     s_gamegroup->m_ai_choice.remove(i);
+    s_windows.worker0->group.m_compete.m_choice.m.remove(i);
     s_mwin->m_models.child().remove(i + 1);
     models.erase(models.begin() + i);
 }
 void ModelsList::clear()
 {
     s_gamegroup->m_ai_choice.clear();
+    s_windows.worker0->group.m_compete.m_choice.m.clear();
     s_mwin->m_models.child().clear();
     models.clear();
 }
